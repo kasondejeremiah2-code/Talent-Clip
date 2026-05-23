@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "io.github.kasondejeremiah2_code.twa",
+        "sha256_cert_fingerprints": ["88:20:5A:94:F5:83:66:9E:5D:66:4D:35:2E:51:75:70:2A:A7:71:4A:A3:50:FE:71:94:AF:8A:2E:1E:59:E7:CD"]
+      }
+    }]
