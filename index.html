@@ -2584,6 +2584,18 @@ function loadCategoryFeed(cat) {
     document.body.appendChild(catBack);
 
     let catSlideCount = 0;
+    // Pull from global library cache for category feed — no extra API call
+    let catYtShorts = [];
+    let catYtIndex = 0;
+    try {
+      const lib = JSON.parse(localStorage.getItem(YT_LIBRARY_KEY) || 'null');
+      if (lib && lib.data?.length) {
+        // Filter by category if possible, otherwise random slice
+        const catQuery = cat.toLowerCase();
+        const filtered = lib.data.filter(v => v.title.toLowerCase().includes(catQuery));
+        catYtShorts = (filtered.length >= 5 ? filtered : lib.data).sort(() => Math.random() - 0.5).slice(0, 30);
+      }
+    } catch(e) {}
     posts.forEach(post => {
       const slide = document.createElement('div');
       slide.className = 'tt-slide';
@@ -2692,18 +2704,18 @@ function loadCategoryFeed(cat) {
       if(catSlideCount > 0 && catSlideCount % 5 === 0 && !isPremiumUser){
         snapWrap.appendChild(makeAdSlide());
       }
+      // Insert 1 YT slide every 3 TC slides
+      if(catSlideCount > 0 && catSlideCount % 3 === 0 && catYtIndex < catYtShorts.length){
+        snapWrap.appendChild(buildYouTubeSlide(catYtShorts[catYtIndex++]));
+      }
     });
 
-    // Autoplay observer
-    const catObs = new IntersectionObserver(entries=>{
-      entries.forEach(e=>{
-        const v=e.target.querySelector('video');
-        if(!v) return;
-        if(e.isIntersecting) v.play().catch(()=>{});
-        else { v.pause(); v.currentTime=0; }
-      });
-    },{threshold:0.3, rootMargin:"100px"});
-    snapWrap.querySelectorAll('.tt-slide, .ad-slide').forEach(s=>catObs.observe(s));
+    // Fill remaining YT shorts after TC posts end
+    while(catYtIndex < catYtShorts.length){
+      snapWrap.appendChild(buildYouTubeSlide(catYtShorts[catYtIndex++]));
+    }
+
+    setupFeedObserver(snapWrap);
   }).catch(e=>{
     grid.innerHTML=`<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted);">⚠️ Could not load posts.<br>${e.message}</div>`;
   });
@@ -2739,111 +2751,175 @@ async function loadExplorePhotos() { loadTikTokFeed(exploreCategory); }
 
 // ── YouTube Shorts fetcher ──────────────────────────────────────────
 // Fetches Shorts via YouTube Data API v3 with localStorage quota caching
-// Rotates daily so users see fresh content every day
-const YT_QUERY_POOLS = [
-  'viral shorts today', 'trending shorts', 'funny shorts viral',
-  'dance shorts trending', 'satisfying shorts', 'comedy shorts viral',
-  'talent shorts', 'amazing shorts viral', 'skills shorts', 'wow shorts viral'
+// ── YouTube massive library fetch ───────────────────────────────
+// 25 diverse queries × 20 results each = up to 500 videos
+// Each search costs 100 quota units. 25 × 100 = 2,500/day well within 10,000 free limit.
+// Stats fetch (videos.list) costs 1 unit per call = 25 more units. Total: ~2,525/day.
+const YT_ALL_QUERIES = [
+  // Trending / viral
+  'viral shorts 2026', 'trending shorts today', 'most viewed shorts',
+  // Entertainment
+  'funny shorts viral', 'comedy shorts', 'prank shorts',
+  // Music & Dance
+  'dance shorts trending', 'music shorts viral', 'afrobeats shorts',
+  // Talent & Skills
+  'talent shorts amazing', 'skills shorts satisfying', 'art shorts timelapse',
+  // Lifestyle
+  'food shorts satisfying', 'cooking shorts quick', 'fitness shorts workout',
+  // Gaming
+  'gaming shorts funny', 'mobile gaming shorts',
+  // Education & Facts
+  'facts shorts mindblowing', 'science shorts amazing',
+  // Animals & Nature
+  'cute animals shorts', 'nature shorts beautiful',
+  // Sports
+  'sports shorts highlights', 'football shorts skills',
+  // Fashion & Beauty
+  'fashion shorts outfit', 'beauty shorts transformation'
 ];
-
-// Session token — changes every time the app is opened, so feed is always fresh on reopen
-const YT_SESSION_KEY = Date.now().toString().slice(0,-4); // changes every ~3min of session
 
 function getTodayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
 function getDailyQuery(cat) {
+  // Not used for main fetch anymore — kept for category-specific calls
   if (cat) return cat + ' shorts';
-  const dayIndex = new Date().getDate() % YT_QUERY_POOLS.length;
-  return YT_QUERY_POOLS[dayIndex];
+  return 'viral shorts';
 }
 
-async function fetchYouTubeShorts(searchQuery, maxResults = 15) {
-  const todayKey = getTodayKey();
-  const cacheKey = YT_SHORTS_QUOTA_CACHE_KEY + '_' + todayKey + '_' + (searchQuery||'default');
+// Master library stored in localStorage — rebuilt once per day
+const YT_LIBRARY_KEY = 'tc_yt_library';
 
-  // Check today's cache — shuffle for variety on same-day refreshes
+async function fetchYouTubeLibrary() {
+  const todayKey = getTodayKey();
+
+  // Return cached library if it's from today
   try {
-    const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
-    if (cached && cached.data?.length) {
-      console.log('✅ YouTube: daily cache hit, shuffling');
+    const cached = JSON.parse(localStorage.getItem(YT_LIBRARY_KEY) || 'null');
+    if (cached && cached.date === todayKey && cached.data?.length >= 50) {
+      console.log(`✅ YouTube library: ${cached.data.length} videos from cache — shuffling`);
       return [...cached.data].sort(() => Math.random() - 0.5);
     }
   } catch(e) {}
 
-  // Clear stale cache from previous days
+  // Clear old cache
   try {
-    Object.keys(localStorage)
-      .filter(k => k.startsWith(YT_SHORTS_QUOTA_CACHE_KEY) && !k.includes(todayKey))
-      .forEach(k => localStorage.removeItem(k));
+    [YT_LIBRARY_KEY, ...Object.keys(localStorage).filter(k => k.startsWith('tc_yt_cache'))].forEach(k => {
+      const v = JSON.parse(localStorage.getItem(k) || 'null');
+      if (v && v.date && v.date !== todayKey) localStorage.removeItem(k);
+    });
   } catch(e) {}
 
-  try {
-    // Step 1: Search for Shorts
-    const searchParams = new URLSearchParams({
-      part: 'snippet',
-      q: searchQuery + ' shorts',
-      type: 'video',
-      videoDuration: 'short',
-      maxResults: String(maxResults),
-      order: 'date',
-      key: YT_API_KEY
-    });
+  console.log('🔄 YouTube: fetching fresh library from', YT_ALL_QUERIES.length, 'queries...');
 
-    const searchRes = await fetch('https://www.googleapis.com/youtube/v3/search?' + searchParams.toString());
-    const searchData = await searchRes.json();
+  // Fetch all queries in parallel (YouTube API handles concurrent requests fine)
+  const seenVideoIds = new Set();
+  const allShorts = [];
 
-    if (searchData.error) {
-      console.warn('⚠️ YouTube API error:', searchData.error.code, searchData.error.message);
-      return [];
+  const queryBatches = [];
+  for (let i = 0; i < YT_ALL_QUERIES.length; i += 5) {
+    queryBatches.push(YT_ALL_QUERIES.slice(i, i + 5));
+  }
+
+  for (const batch of queryBatches) {
+    const batchResults = await Promise.all(batch.map(async q => {
+      try {
+        const params = new URLSearchParams({
+          part: 'snippet', q: q, type: 'video',
+          videoDuration: 'short', maxResults: '20',
+          order: 'date', key: YT_API_KEY
+        });
+        const res = await fetch('https://www.googleapis.com/youtube/v3/search?' + params);
+        const data = await res.json();
+        if (data.error) { console.warn('YT error for', q, ':', data.error.message); return []; }
+        return (data.items || []).filter(item => item.id?.videoId && !seenVideoIds.has(item.id.videoId));
+      } catch(e) { return []; }
+    }));
+
+    // Collect unique videos from this batch
+    const batchItems = batchResults.flat();
+    const batchVideoIds = batchItems.map(i => i.id.videoId).filter(id => !seenVideoIds.has(id));
+    batchVideoIds.forEach(id => seenVideoIds.add(id));
+    const uniqueItems = batchItems.filter(i => batchVideoIds.includes(i.id.videoId));
+
+    if (!uniqueItems.length) continue;
+
+    // Fetch stats for this batch
+    try {
+      const statsParams = new URLSearchParams({
+        part: 'statistics', id: uniqueItems.map(i => i.id.videoId).join(','), key: YT_API_KEY
+      });
+      const statsRes = await fetch('https://www.googleapis.com/youtube/v3/videos?' + statsParams);
+      const statsData = await statsRes.json();
+      const statsMap = {};
+      (statsData.items || []).forEach(v => { statsMap[v.id] = v.statistics; });
+
+      uniqueItems.forEach(item => {
+        const vid = item.id.videoId;
+        const stats = statsMap[vid] || {};
+        allShorts.push({
+          _isYouTube: true,
+          id: 'yt_' + vid,
+          videoId: vid,
+          authorName: item.snippet.channelTitle || 'YouTube Creator',
+          channelId: item.snippet.channelId,
+          title: item.snippet.title || '',
+          thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url || '',
+          likeCount: parseInt(stats.likeCount || 0),
+          viewCount: parseInt(stats.viewCount || 0),
+          commentCount: parseInt(stats.commentCount || 0),
+        });
+      });
+    } catch(e) {
+      // Stats failed — add without stats
+      uniqueItems.forEach(item => {
+        const vid = item.id.videoId;
+        allShorts.push({
+          _isYouTube: true, id: 'yt_' + vid, videoId: vid,
+          authorName: item.snippet.channelTitle || 'YouTube Creator',
+          channelId: item.snippet.channelId, title: item.snippet.title || '',
+          thumbnail: item.snippet.thumbnails?.high?.url || '', likeCount: 0, viewCount: 0, commentCount: 0,
+        });
+      });
     }
 
-    const items = (searchData.items || []).filter(item => item.id?.videoId);
-    if (!items.length) return [];
-
-    const videoIds = items.map(item => item.id.videoId).join(',');
-
-    // Step 2: Fetch statistics (likes, views) for all videos in one call
-    const statsParams = new URLSearchParams({
-      part: 'statistics',
-      id: videoIds,
-      key: YT_API_KEY
-    });
-    const statsRes = await fetch('https://www.googleapis.com/youtube/v3/videos?' + statsParams.toString());
-    const statsData = await statsRes.json();
-    const statsMap = {};
-    (statsData.items || []).forEach(v => { statsMap[v.id] = v.statistics; });
-
-    const shorts = items.map(item => {
-      const vid = item.id.videoId;
-      const stats = statsMap[vid] || {};
-      return {
-        _isYouTube: true,
-        id: 'yt_' + vid,
-        videoId: vid,
-        authorName: item.snippet.channelTitle || 'YouTube Creator',
-        channelId: item.snippet.channelId,
-        title: item.snippet.title || '',
-        thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url || '',
-        likeCount: parseInt(stats.likeCount || 0),
-        viewCount: parseInt(stats.viewCount || 0),
-        commentCount: parseInt(stats.commentCount || 0),
-      };
-    });
-
-    console.log('✅ YouTube: fetched', shorts.length, 'fresh shorts with stats');
-
-    // Cache for the day
-    try {
-      localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data: shorts }));
-    } catch(e) {}
-
-    return shorts;
-  } catch(e) {
-    console.warn('⚠️ YouTube fetch failed:', e.message);
-    return [];
+    // Small delay between batches to be polite to the API
+    await new Promise(r => setTimeout(r, 200));
   }
+
+  console.log(`✅ YouTube library built: ${allShorts.length} unique videos`);
+
+  // Save to localStorage — full library for the day
+  try {
+    localStorage.setItem(YT_LIBRARY_KEY, JSON.stringify({ date: todayKey, data: allShorts }));
+  } catch(e) {
+    console.warn('localStorage full — saving trimmed library');
+    try { localStorage.setItem(YT_LIBRARY_KEY, JSON.stringify({ date: todayKey, data: allShorts.slice(0, 100) })); } catch(e2) {}
+  }
+
+  // Return shuffled
+  return [...allShorts].sort(() => Math.random() - 0.5);
+}
+
+// Keep old fetchYouTubeShorts for category feeds (smaller targeted fetch)
+async function fetchYouTubeShorts(searchQuery, maxResults = 20) {
+  try {
+    const params = new URLSearchParams({
+      part: 'snippet', q: searchQuery + ' shorts', type: 'video',
+      videoDuration: 'short', maxResults: String(maxResults),
+      order: 'date', key: YT_API_KEY
+    });
+    const res = await fetch('https://www.googleapis.com/youtube/v3/search?' + params);
+    const data = await res.json();
+    if (data.error) return [];
+    return (data.items || []).filter(i => i.id?.videoId).map(item => ({
+      _isYouTube: true, id: 'yt_' + item.id.videoId, videoId: item.id.videoId,
+      authorName: item.snippet.channelTitle || 'YouTube Creator',
+      channelId: item.snippet.channelId, title: item.snippet.title || '',
+      thumbnail: item.snippet.thumbnails?.high?.url || '', likeCount: 0, viewCount: 0, commentCount: 0,
+    }));
+  } catch(e) { return []; }
 }
 
 // Set of subscribed channel IDs (persisted in localStorage)
@@ -2875,18 +2951,107 @@ window.ytSubscribe = (channelId, btn) => {
   });
 };
 
+// ── YouTube local interaction state ─────────────────────────────
+const _ytLiked = new Set(JSON.parse(localStorage.getItem('tc_yt_liked') || '[]'));
+function _saveYtLiked() { try { localStorage.setItem('tc_yt_liked', JSON.stringify([..._ytLiked])); } catch(e){} }
+
+window.ytLocalLike = (videoId, btn, baseLikes) => {
+  const ico = btn.querySelector('.ico-wrap');
+  const lbl = document.getElementById('ytlk-' + videoId);
+  if (_ytLiked.has(videoId)) {
+    _ytLiked.delete(videoId);
+    btn.classList.remove('liked');
+    if (ico) ico.textContent = '🤍';
+    if (lbl) lbl.textContent = fmt(Math.max(0, baseLikes));
+  } else {
+    _ytLiked.add(videoId);
+    btn.classList.add('liked');
+    if (ico) { ico.textContent = '❤️'; ico.style.transform = 'scale(1.4)'; setTimeout(() => ico.style.transform = '', 200); }
+    if (lbl) lbl.textContent = fmt(baseLikes + 1);
+  }
+  _saveYtLiked();
+};
+
+window.ytOpenComments = (videoId, title) => {
+  if (!currentUser) { openLoginGate(); return; }
+  // Reuse the TC comments drawer — store under yt_ prefixed postId
+  _commentsPostId = 'yt_' + videoId;
+  const drawer = document.getElementById('commentsDrawer');
+  const overlay = document.getElementById('commentsOverlay');
+  const list = document.getElementById('commentsList');
+  list.innerHTML = '<div style="text-align:center;padding:30px;color:#64748b;">Loading...</div>';
+  overlay.style.display = 'block';
+  drawer.classList.add('open');
+  cancelReply();
+  if (_commentsUnsub) _commentsUnsub();
+  // Comments stored in Firestore under yt_videoId so they're persistent
+  const q = query(collection(db, 'ytComments', videoId, 'comments'), orderBy('createdAt','asc'), limit(100));
+  _commentsUnsub = onSnapshot(q, snap => {
+    const cdCount = document.getElementById('cdCount');
+    if (cdCount) cdCount.textContent = snap.size ? `(${snap.size})` : '';
+    if (snap.empty) {
+      list.innerHTML = '<div style="text-align:center;padding:40px 20px;"><div style="font-size:40px;">💬</div><div style="color:#64748b;font-size:13px;margin-top:8px;">No comments yet.<br>Be the first!</div></div>';
+      return;
+    }
+    list.innerHTML = '';
+    snap.docs.forEach(d => {
+      const c = d.data();
+      const div = document.createElement('div');
+      div.className = 'cm-item';
+      div.innerHTML = `
+        <img class="cm-av" src="${c.authorPhoto||`https://ui-avatars.com/api/?name=${encodeURIComponent(c.authorName||'U')}&background=0e0e1f&color=00c6ff`}">
+        <div class="cm-body">
+          <div class="cm-top"><span class="cm-name">${c.authorName||'User'}</span><span class="cm-time">${timeAgo(c.createdAt?.toDate?.() || new Date())}</span></div>
+          <div class="cm-text">${c.text||''}</div>
+        </div>`;
+      list.appendChild(div);
+    });
+  });
+};
+
+// Override submitComment to handle yt_ prefixed postIds
+const _origSubmitComment = window.submitComment;
+window.submitComment = async () => {
+  if (_commentsPostId && _commentsPostId.startsWith('yt_')) {
+    if (!currentUser) { openLoginGate(); return; }
+    const inp = document.getElementById('commentInput');
+    const text = inp?.value?.trim();
+    if (!text) return;
+    const videoId = _commentsPostId.slice(3);
+    inp.value = '';
+    const ud = (await getDoc(doc(db,'users',currentUser.uid))).data() || {};
+    await addDoc(collection(db,'ytComments',videoId,'comments'), {
+      text,
+      authorName: ud.displayName || currentUser.displayName || 'User',
+      authorPhoto: ud.photoURL || currentUser.photoURL || '',
+      uid: currentUser.uid,
+      createdAt: serverTimestamp()
+    });
+    return;
+  }
+  if (_origSubmitComment) _origSubmitComment();
+};
+
+window.ttBookmarkYT = (videoId, title, btn) => {
+  toast('🔖 Saved to bookmarks!');
+  const ico = btn.querySelector('.ico-wrap') || document.getElementById('ytbm-' + videoId);
+  if (ico) { ico.textContent = '✅'; setTimeout(() => { ico.textContent = '🔖'; }, 1500); }
+};
+
 function buildYouTubeSlide(yt) {
   const isSubscribed = subscribedChannels.has(yt.channelId);
+  const isLiked = _ytLiked.has(yt.videoId);
   const slide = document.createElement('div');
   slide.className = 'tt-slide yt-slide';
   slide.dataset.postId = yt.id;
   slide.dataset.ytVideoId = yt.videoId;
   slide.dataset.ytChannelId = yt.channelId;
 
-  const likeLabel = yt.likeCount > 0 ? fmt(yt.likeCount) : '👍';
-  const commentLabel = yt.commentCount > 0 ? fmt(yt.commentCount) : '💬';
+  const baseLikes = yt.likeCount || 0;
+  const likeLabel = fmt(baseLikes + (isLiked ? 1 : 0)) || '0';
+  const commentLabel = yt.commentCount > 0 ? fmt(yt.commentCount) : '0';
   const avUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent((yt.authorName||'YT').slice(0,2))}&background=cc0000&color=fff`;
-  const safeTitle = (yt.title||'').replace(/`/g,"'");
+  const safeTitle = (yt.title||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
 
   slide.innerHTML = `
     <div class="yt-iframe-wrap" style="position:absolute;inset:0;background:#000;z-index:1;">
@@ -2916,21 +3081,25 @@ function buildYouTubeSlide(yt) {
       ${yt.viewCount > 0 ? `<div class="tt-song">👁 ${fmt(yt.viewCount)} views</div>` : ''}
     </div>
     <div class="tt-actions" style="pointer-events:auto;">
-      <div class="tt-btn" onclick="window.open('https://www.youtube.com/watch?v=${yt.videoId}','_blank')">
-        <div class="ico-wrap">❤️</div>
-        <div class="lbl">${likeLabel}</div>
+      <div class="tt-btn ${isLiked?'liked':''}" id="ytbtn-${yt.videoId}" onclick="ytLocalLike('${yt.videoId}',this,${baseLikes})">
+        <div class="ico-wrap">${isLiked?'❤️':'🤍'}</div>
+        <div class="lbl" id="ytlk-${yt.videoId}">${likeLabel}</div>
       </div>
-      <div class="tt-btn" onclick="window.open('https://www.youtube.com/watch?v=${yt.videoId}#comments','_blank')">
+      <div class="tt-btn" onclick="ytOpenComments('${yt.videoId}','${safeTitle}')">
         <div class="ico-wrap">💬</div>
         <div class="lbl">${commentLabel}</div>
       </div>
-      <div class="tt-btn" onclick="navigator.share?navigator.share({url:'https://youtu.be/${yt.videoId}',title:\`${safeTitle}\`}):window.open('https://youtu.be/${yt.videoId}','_blank')">
+      <div class="tt-btn" onclick="navigator.share?navigator.share({url:'https://youtu.be/${yt.videoId}',title:'${safeTitle}'}):window.open('https://youtu.be/${yt.videoId}','_blank')">
         <div class="ico-wrap">↗️</div>
         <div class="lbl">Share</div>
       </div>
-      <div class="tt-btn" onclick="event.stopPropagation();ytSubscribe('${yt.channelId}',document.querySelector('.yt-subscribe-btn[data-channel=\\'${yt.channelId}\\']'))">
-        <div class="ico-wrap">${isSubscribed?'🔔':'🔕'}</div>
-        <div class="lbl">${isSubscribed?'Bell':'Sub'}</div>
+      <div class="tt-btn" onclick="ttBookmarkYT('${yt.videoId}','${safeTitle}',this)">
+        <div class="ico-wrap" id="ytbm-${yt.videoId}">🔖</div>
+        <div class="lbl">Save</div>
+      </div>
+      <div class="tt-btn" data-action="gift">
+        <div class="ico-wrap">🎁</div>
+        <div class="lbl">Gift</div>
       </div>
     </div>`;
 
@@ -2988,10 +3157,8 @@ async function loadTikTokFeed(cat) {
       return bt - at;
     });
 
-    // 5. Fetch YouTube Shorts in parallel (non-blocking — feed shows even if YT fails)
-    // Use category as search query if set, otherwise use popular terms
-    const ytQuery = getDailyQuery(cat);
-    const ytShorts = await fetchYouTubeShorts(ytQuery, 15);
+    // 5. Fetch full YouTube library (500 videos, cached daily, shuffled every load)
+    const ytShorts = await fetchYouTubeLibrary();
 
     wrap.innerHTML = '';
 
