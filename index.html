@@ -610,7 +610,7 @@ body{
   <div class="hdr" style="background:rgba(6,6,18,.95);position:sticky;top:0;z-index:10;">
     <div class="hdr-back" onclick="openPage('home')">←</div>
     <div class="hdr-title">🔥 Explore</div>
-    <div class="hdr-menu" onclick="openMenu()">☰</div>
+    <div onclick="refreshFeed()" style="cursor:pointer;font-size:20px;padding:4px 8px;border-radius:50%;background:rgba(255,255,255,.08);line-height:1;" title="Refresh feed">↺</div>
   </div>
   <!-- Category filter tabs - horizontal scroll, Random only here -->
   <div id="exploreTabs" style="display:flex;gap:8px;padding:10px 14px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;background:rgba(6,6,18,.95);border-bottom:1px solid rgba(255,255,255,.05);position:sticky;top:57px;z-index:9;">
@@ -2551,52 +2551,56 @@ window.openCategory = (cat,icon)=>{
   openPage('categoryPage');
 };
 
-function loadCategoryFeed(cat) {
+async function loadCategoryFeed(cat) {
   const grid=document.getElementById('feedGrid');
   grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted);">Loading...</div>';
   // Use simple query without orderBy to avoid index requirement
   const q=query(collection(db,'posts'),where('category','==',cat),limit(40));
-  getDocs(q).then(snap=>{
-    grid.innerHTML='';
-    if(snap.empty){
-      grid.innerHTML=`<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">No posts in ${cat} yet.<br><br>Be the first! 🚀</div>`;
-      return;
-    }
-    // Sort by createdAt in memory
-    let posts = snap.docs.map(d=>({id:d.id,...d.data()}));
-    posts.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-    // Render ALL posts (photos + videos) as full-screen snap slides — like TikTok
-    // Remove any existing snap wrap
-    const oldSnap = document.getElementById('catSnapWrap');
-    if(oldSnap) oldSnap.remove();
-    const snapWrap = document.createElement('div');
-    snapWrap.id = 'catSnapWrap';
-    snapWrap.className = 'tt-snap';
-    snapWrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;height:100vh;z-index:50;';
-    // Back button overlay
-    const catBack = document.createElement('div');
-    catBack.style.cssText = 'position:fixed;top:16px;left:14px;z-index:51;background:rgba(0,0,0,.45);border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-size:20px;';
-    catBack.innerHTML = '←';
-    catBack.id = 'catBackBtn';
-    catBack.onclick = () => { snapWrap.remove(); catBack.remove(); };
-    grid.style.display = 'none';
-    document.body.appendChild(snapWrap);
-    document.body.appendChild(catBack);
+  let snap;
+  try { snap = await getDocs(q); } catch(e) {
+    grid.innerHTML=`<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted);">⚠️ Could not load posts.<br>${e.message}</div>`;
+    return;
+  }
+  grid.innerHTML='';
+  if(snap.empty){
+    grid.innerHTML=`<div style="grid-column:1/-1;text-align:center;padding:60px;color:var(--muted);">No posts in ${cat} yet.<br><br>Be the first! 🚀</div>`;
+    return;
+  }
+  let posts = snap.docs.map(d=>({id:d.id,...d.data()}));
+  posts.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  const oldSnap = document.getElementById('catSnapWrap');
+  if(oldSnap) oldSnap.remove();
+  const snapWrap = document.createElement('div');
+  snapWrap.id = 'catSnapWrap';
+  snapWrap.className = 'tt-snap';
+  snapWrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;height:100vh;z-index:50;';
+  const catBack = document.createElement('div');
+  catBack.style.cssText = 'position:fixed;top:16px;left:14px;z-index:51;background:rgba(0,0,0,.45);border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-size:20px;';
+  catBack.innerHTML = '←';
+  catBack.id = 'catBackBtn';
+  catBack.onclick = () => { snapWrap.remove(); catBack.remove(); };
+  grid.style.display = 'none';
+  document.body.appendChild(snapWrap);
+  document.body.appendChild(catBack);
 
-    let catSlideCount = 0;
-    // Pull from global library cache for category feed — no extra API call
-    let catYtShorts = [];
-    let catYtIndex = 0;
-    try {
-      const lib = JSON.parse(localStorage.getItem(YT_LIBRARY_KEY) || 'null');
-      if (lib && lib.data?.length) {
-        // Filter by category if possible, otherwise random slice
-        const catQuery = cat.toLowerCase();
-        const filtered = lib.data.filter(v => v.title.toLowerCase().includes(catQuery));
-        catYtShorts = (filtered.length >= 5 ? filtered : lib.data).sort(() => Math.random() - 0.5).slice(0, 30);
-      }
-    } catch(e) {}
-    posts.forEach(post => {
+  let catSlideCount = 0;
+  let catYtShorts = [];
+  let catYtIndex = 0;
+  try {
+    const lib = JSON.parse(localStorage.getItem(YT_LIBRARY_KEY) || 'null');
+    if (lib && lib.data?.length) {
+      const catQ = cat.toLowerCase();
+      const filtered = lib.data.filter(v =>
+        v.title.toLowerCase().includes(catQ) || v.authorName.toLowerCase().includes(catQ)
+      );
+      catYtShorts = (filtered.length >= 5 ? filtered : lib.data).sort(() => Math.random() - 0.5).slice(0, 50);
+    }
+    if (catYtShorts.length < 5) catYtShorts = await fetchYouTubeShorts(cat, 20);
+  } catch(e) {
+    try { catYtShorts = await fetchYouTubeShorts(cat, 20); } catch(e2) {}
+  }
+
+  posts.forEach(post => {
       const slide = document.createElement('div');
       slide.className = 'tt-slide';
       slide.dataset.postId = post.id;
@@ -2609,7 +2613,6 @@ function loadCategoryFeed(cat) {
       const catBadge = post.category ? `<div style="position:absolute;top:70px;left:14px;background:rgba(0,0,0,.55);padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;color:#fff;">🎬 ${post.category}</div>` : '';
 
       if(post.type==='photo' && post.mediaUrl){
-        // Photo slide — full screen image
         slide.innerHTML = `
           <img src="${post.mediaUrl}" style="width:100%;height:100%;object-fit:cover;display:block;">
           <div class="tt-overlay"></div>
@@ -2648,13 +2651,11 @@ function loadCategoryFeed(cat) {
               <div class="lbl">Gift</div>
             </div>
           </div>`;
-        // Double-tap to open full photo modal
         const img = slide.querySelector('img');
         attachDoubleTap(img, post.mediaUrl, ()=>openPhotoModal(post));
       } else if(post.type==='video' && post.mediaUrl){
-        // Video slide — same as explore feed
         slide.innerHTML = `
-          <video src="${post.mediaUrl}" loop playsinline preload="auto"></video>
+          <video src="${post.mediaUrl}" loop playsinline preload="none" data-src="${post.mediaUrl}"></video>
           <div class="sound-toggle" onclick="toggleFeedSound(this)">🔊</div>
           <div class="vid-spinner"><svg viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="4" stroke-dasharray="80 40" stroke-linecap="round"/></svg></div>
           <div class="pause-overlay"><div class="pause-ico">⏸</div></div>
@@ -2700,25 +2701,19 @@ function loadCategoryFeed(cat) {
 
       snapWrap.appendChild(slide);
       catSlideCount++;
-      // Insert ad every 5 slides (same as explore)
       if(catSlideCount > 0 && catSlideCount % 5 === 0 && !isPremiumUser){
         snapWrap.appendChild(makeAdSlide());
       }
-      // Insert 1 YT slide every 3 TC slides
       if(catSlideCount > 0 && catSlideCount % 3 === 0 && catYtIndex < catYtShorts.length){
         snapWrap.appendChild(buildYouTubeSlide(catYtShorts[catYtIndex++]));
       }
-    });
-
-    // Fill remaining YT shorts after TC posts end
-    while(catYtIndex < catYtShorts.length){
-      snapWrap.appendChild(buildYouTubeSlide(catYtShorts[catYtIndex++]));
-    }
-
-    setupFeedObserver(snapWrap);
-  }).catch(e=>{
-    grid.innerHTML=`<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted);">⚠️ Could not load posts.<br>${e.message}</div>`;
   });
+
+  while(catYtIndex < catYtShorts.length){
+    snapWrap.appendChild(buildYouTubeSlide(catYtShorts[catYtIndex++]));
+  }
+
+  setupFeedObserver(snapWrap);
 }
 
 // ─── Explore Page State ───
@@ -2727,9 +2722,11 @@ let exploreContentType = 'all'; // 'all' | 'video' | 'photo'
 
 window.switchExploreTab = (cat, icon, tabId) => {
   exploreCategory = cat === 'random' ? '' : cat;
-  // Highlight selected tab
   document.querySelectorAll('.etab[id^="etab-"]').forEach(b => b.classList.remove('on'));
   document.getElementById('etab-' + tabId)?.classList.add('on');
+  _feedLoaded = false; // reset so new category loads fresh
+  const wrap = document.getElementById('exploreVideoFeed');
+  if (wrap) wrap.innerHTML = '';
   loadExploreFeed();
 };
 
@@ -2738,11 +2735,28 @@ window.switchContentType = (type) => {
   // Kept as a no-op so any lingering HTML references don't crash
 };
 
+let _feedLoaded = false;
+
 async function loadExploreFeed() {
-  // Explore is now always a full-screen TikTok-style snap feed, same as categories.
-  // No grid, no overview. Ads are full-screen scrollable slides every 5 videos.
+  if (_feedLoaded) return; // already loaded — don't freeze on tab switch
+  _feedLoaded = true;
   loadTikTokFeed(exploreCategory);
 }
+
+window.refreshFeed = () => {
+  _feedLoaded = false;
+  _seenPostIds.clear();
+  // Clear YT cache so fresh videos load
+  try {
+    Object.keys(localStorage)
+      .filter(k => k.startsWith('tc_yt'))
+      .forEach(k => localStorage.removeItem(k));
+  } catch(e) {}
+  const wrap = document.getElementById('exploreVideoFeed');
+  if (wrap) wrap.innerHTML = '';
+  loadExploreFeed();
+  toast('🔄 Feed refreshed!');
+};
 
 // loadExploreAll and loadExplorePhotos replaced by loadTikTokFeed above.
 // Stub them so any remaining calls don't crash.
@@ -3009,28 +3023,7 @@ window.ytOpenComments = (videoId, title) => {
   });
 };
 
-// Override submitComment to handle yt_ prefixed postIds
-const _origSubmitComment = window.submitComment;
-window.submitComment = async () => {
-  if (_commentsPostId && _commentsPostId.startsWith('yt_')) {
-    if (!currentUser) { openLoginGate(); return; }
-    const inp = document.getElementById('commentInput');
-    const text = inp?.value?.trim();
-    if (!text) return;
-    const videoId = _commentsPostId.slice(3);
-    inp.value = '';
-    const ud = (await getDoc(doc(db,'users',currentUser.uid))).data() || {};
-    await addDoc(collection(db,'ytComments',videoId,'comments'), {
-      text,
-      authorName: ud.displayName || currentUser.displayName || 'User',
-      authorPhoto: ud.photoURL || currentUser.photoURL || '',
-      uid: currentUser.uid,
-      createdAt: serverTimestamp()
-    });
-    return;
-  }
-  if (_origSubmitComment) _origSubmitComment();
-};
+// YT comment handling merged into main submitComment below
 
 window.ttBookmarkYT = (videoId, title, btn) => {
   toast('🔖 Saved to bookmarks!');
@@ -3078,7 +3071,7 @@ function buildYouTubeSlide(yt) {
         </button>
       </div>
       <div class="tt-title">${yt.title||''}</div>
-      ${yt.viewCount > 0 ? `<div class="tt-song">👁 ${fmt(yt.viewCount)} views</div>` : ''}
+      <div class="tt-song">👁 ${yt.viewCount > 0 ? fmt(yt.viewCount) + ' views' : 'YouTube Shorts'}</div>
     </div>
     <div class="tt-actions" style="pointer-events:auto;">
       <div class="tt-btn ${isLiked?'liked':''}" id="ytbtn-${yt.videoId}" onclick="ytLocalLike('${yt.videoId}',this,${baseLikes})">
@@ -3106,6 +3099,9 @@ function buildYouTubeSlide(yt) {
   return slide;
 }
 
+// Session-level seen post tracker — cleared on full page reload, persists across tab switches
+const _seenPostIds = new Set();
+
 async function loadTikTokFeed(cat) {
   const wrap = document.getElementById('exploreVideoFeed');
   if (!wrap) return;
@@ -3113,87 +3109,66 @@ async function loadTikTokFeed(cat) {
 
   try {
     let followingPosts = [];
-    let randomPosts = [];
+    let otherPosts = [];
 
-    // 1. Get videos from people you follow first
+    // 1. Following posts — no orderBy to avoid index requirements, sort in memory
     if (currentUser && followingSet.size > 0) {
       const followingUids = [...followingSet].slice(0, 10);
       const fq = cat
-        ? query(collection(db,'posts'), where('type','==','video'), where('uid','in',followingUids), where('category','==',cat), limit(8))
-        : query(collection(db,'posts'), where('type','==','video'), where('uid','in',followingUids), limit(8));
+        ? query(collection(db,'posts'), where('type','==','video'), where('uid','in',followingUids), where('category','==',cat), limit(15))
+        : query(collection(db,'posts'), where('type','==','video'), where('uid','in',followingUids), limit(15));
       const fsnap = await getDocs(fq);
-      followingPosts = fsnap.docs.map(d => ({id:d.id,...d.data(), _fromFollow:true}));
-    followingPosts.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      followingPosts = fsnap.docs.map(d => ({id:d.id,...d.data(),_fromFollow:true}));
     }
 
-    // 2. Get boosted posts first in random feed
-    const boostedQ = cat
-      ? query(collection(db,'posts'), where('type','==','video'), where('boosted','==',true), where('category','==',cat), limit(3))
-      : query(collection(db,'posts'), where('type','==','video'), where('boosted','==',true), limit(3));
-    const boostedSnap = await getDocs(boostedQ);
-    const boostedPosts = boostedSnap.docs.map(d => ({id:d.id,...d.data(), _boosted:true}));
-
-    // 3. Get random/popular posts
+    // 2. All posts — simple queries, sort in memory
     const rq = cat
-      ? query(collection(db,'posts'), where('type','==','video'), where('category','==',cat), limit(30))
-      : query(collection(db,'posts'), where('type','==','video'), limit(30));
+      ? query(collection(db,'posts'), where('type','==','video'), where('category','==',cat), limit(50))
+      : query(collection(db,'posts'), where('type','==','video'), limit(50));
     const rsnap = await getDocs(rq);
-    randomPosts = rsnap.docs.map(d => ({id:d.id,...d.data()}));
-    randomPosts.sort((a,b)=>{
-      const at = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
-      const bt = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
+    otherPosts = rsnap.docs.map(d => ({id:d.id,...d.data()}));
+
+    // 3. Merge — following first, then rest. No duplicates. Boosted float to top.
+    const merged = new Map();
+    [...followingPosts, ...otherPosts].forEach(p => { if (!merged.has(p.id)) merged.set(p.id, p); });
+    let allPosts = [...merged.values()];
+
+    // Sort: boosted first, then newest
+    allPosts.sort((a,b) => {
+      if ((b.boosted||false) !== (a.boosted||false)) return (b.boosted ? 1 : 0) - (a.boosted ? 1 : 0);
+      const at = a.createdAt?.seconds || 0;
+      const bt = b.createdAt?.seconds || 0;
       return bt - at;
     });
 
-    // 4. Merge: following first → boosted → random (no duplicates), newest first
-    const seen = new Set();
-    const allPosts = [];
-    [...followingPosts, ...boostedPosts, ...randomPosts].forEach(p => {
-      if (!seen.has(p.id)) { seen.add(p.id); allPosts.push(p); }
-    });
-    allPosts.sort((a,b)=>{
-      const at = a.createdAt?.seconds || a.createdAt?.toMillis?.() || 0;
-      const bt = b.createdAt?.seconds || b.createdAt?.toMillis?.() || 0;
-      return bt - at;
-    });
+    // 4. Filter already-seen posts this session (no repeats like TikTok)
+    const freshPosts = allPosts.filter(p => !_seenPostIds.has(p.id));
+    // If everything's been seen, reset and show all again (user has watched everything)
+    const postsToShow = freshPosts.length > 0 ? freshPosts : allPosts;
+    postsToShow.forEach(p => _seenPostIds.add(p.id));
 
-    // 5. Fetch full YouTube library (500 videos, cached daily, shuffled every load)
-    const ytShorts = await fetchYouTubeLibrary();
-
+    // 5. Show TC posts immediately — don't wait for YouTube
     wrap.innerHTML = '';
 
-    // If ZERO TalentClip posts — fill entirely with YouTube Shorts
-    if (!allPosts.length) {
-      if (!ytShorts.length) {
-        wrap.innerHTML = '<div class="tt-slide"><div class="tt-empty-slide"><span style="font-size:50px;">🎬</span><p>No videos yet.<br>Upload one!</p></div></div>';
-        return;
-      }
-      // All YouTube
-      ytShorts.forEach(yt => wrap.appendChild(buildYouTubeSlide(yt)));
-      setupFeedObserver(wrap);
-      return;
+    if (!postsToShow.length) {
+      // No TC posts — show loading skeleton while YT fetches
+      wrap.innerHTML = '<div class="tt-slide"><div class="tt-empty-slide"><span style="font-size:50px;">⏳</span><p>Loading YouTube Shorts…</p></div></div>';
     }
 
-    // 6. Mix: insert 1 YT Short every 3 TalentClip videos, starting at position 2
     let ytIndex = 0;
-    let videoCount = 0;
-    const insertYT = () => {
-      if (ytIndex < ytShorts.length) {
-        wrap.appendChild(buildYouTubeSlide(ytShorts[ytIndex++]));
+    let totalSlideCount = 0;
+
+    const appendSlide = (el) => {
+      if (totalSlideCount > 0 && totalSlideCount % 5 === 0 && !isPremiumUser) {
+        wrap.appendChild(makeAdSlide());
+        totalSlideCount++;
       }
+      wrap.appendChild(el);
+      totalSlideCount++;
     };
 
-    for (const p of allPosts) {
-      // Ad every 5 videos
-      if (videoCount > 0 && videoCount % 5 === 0 && !isPremiumUser) {
-        wrap.appendChild(makeAdSlide());
-      }
-
-      // YouTube Short: first one at position 2, then every 3 after that
-      if (videoCount === 2 || (videoCount > 2 && (videoCount - 2) % 3 === 0)) {
-        insertYT();
-      }
-
+    // Build TC slides right now — fast, no freeze
+    for (const p of postsToShow) {
       const slide = document.createElement('div');
       slide.className = 'tt-slide';
       slide.dataset.postId = p.id;
@@ -3202,7 +3177,6 @@ async function loadTikTokFeed(cat) {
       const liked = likedPosts.has(p.id);
       const isFollowing = followingSet.has(p.uid);
       const isBoosted = p._boosted || p.boosted || false;
-
       const avSrc = p.authorPhoto || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.authorName||'U')}&background=0e0e1f&color=00c6ff`;
       slide.innerHTML = `
         <video src="${p.mediaUrl}" loop playsinline preload="none" data-src="${p.mediaUrl}"></video>
@@ -3248,16 +3222,49 @@ async function loadTikTokFeed(cat) {
         </div>`;
       const vid2 = slide.querySelector('video');
       attachDoubleTap(vid2, null, () => { if(vid2.paused){vid2.play();}else{vid2.pause();showPauseOverlay(vid2.closest('.tt-slide'));} });
-      wrap.appendChild(slide);
-      videoCount++;
+      appendSlide(slide);
     }
 
-    // After all TC videos — fill remaining YouTube Shorts so feed never ends
-    while (ytIndex < ytShorts.length) {
-      wrap.appendChild(buildYouTubeSlide(ytShorts[ytIndex++]));
-    }
-
+    // Start observer NOW so TC videos play immediately while YT loads in background
     setupFeedObserver(wrap);
+
+    // Fetch YouTube library in background — append to feed when ready without blocking
+    fetchYouTubeLibrary().then(ytShorts => {
+      if (!ytShorts.length) return;
+      // Remove the "loading YT" placeholder if it was shown
+      const placeholder = wrap.querySelector('.tt-empty-slide');
+      if (placeholder) placeholder.closest('.tt-slide')?.remove();
+
+      // If no TC posts were shown, clear and fill with YT
+      if (!postsToShow.length) { wrap.innerHTML = ''; totalSlideCount = 0; }
+
+      // Interleave YT into existing feed — insert every 3 slides from where TC ended
+      let ytIdx = 0;
+      const existingSlides = wrap.querySelectorAll('.tt-slide:not(.yt-slide), .ad-slide');
+      const insertAt = [];
+      existingSlides.forEach((s, i) => {
+        if ((i + 1) % 3 === 0) insertAt.push(s);
+      });
+      insertAt.forEach(anchor => {
+        if (ytIdx < ytShorts.length) {
+          anchor.insertAdjacentElement('afterend', buildYouTubeSlide(ytShorts[ytIdx++]));
+        }
+      });
+
+      // Append remaining at end
+      while (ytIdx < ytShorts.length) {
+        if (totalSlideCount > 0 && totalSlideCount % 5 === 0 && !isPremiumUser) {
+          wrap.appendChild(makeAdSlide()); totalSlideCount++;
+        }
+        wrap.appendChild(buildYouTubeSlide(ytShorts[ytIdx++]));
+        totalSlideCount++;
+      }
+
+      // Re-observe new slides
+      const io = wrap._observer;
+      if (io) wrap.querySelectorAll('.yt-slide').forEach(s => io.observe(s));
+      else setupFeedObserver(wrap);
+    }).catch(() => {}); // YT failure is non-fatal
 
   } catch(err) {
     console.error('Feed error:', err);
@@ -3266,9 +3273,14 @@ async function loadTikTokFeed(cat) {
 }
 
 function setupFeedObserver(wrap) {
-  // Eagerly preload only the first slide
-  const firstVid = wrap.querySelector('video');
-  if (firstVid) { firstVid.preload = 'auto'; firstVid.load(); }
+  // Eagerly preload first 2 slides
+  wrap.querySelectorAll('video').forEach((v, i) => {
+    if (i < 2 && v.dataset.src) {
+      v.preload = 'auto';
+      v.src = v.dataset.src;
+      v.load();
+    }
+  });
 
   const io = new IntersectionObserver(entries => {
     entries.forEach(e => {
@@ -3276,25 +3288,46 @@ function setupFeedObserver(wrap) {
       const isYT = e.target.classList.contains('yt-slide');
       const v = e.target.querySelector('video');
       const iframe = e.target.querySelector('iframe');
+      const spinner = e.target.querySelector('.vid-spinner');
 
       if (e.isIntersecting) {
         // ── TalentClip video ──
         if (v) {
-          // Lazy load: set src + preload when slide comes into view
-          if (v.preload === 'none' && v.dataset.src) {
-            v.preload = 'auto';
-            v.src = v.dataset.src;
-            v.load();
-          }
-          v.play().catch(() => {});
-          applyMuteToSlide(e.target);
           attachVideoEvents(e.target);
+          applyMuteToSlide(e.target);
 
-          // Preload the next slide's video while this one plays
+          const doPlay = () => {
+            v.play().catch(() => {
+              // If autoplay blocked, show a tap-to-play overlay
+              if (spinner) spinner.style.display = 'none';
+            });
+          };
+
+          if (v.readyState >= 3) {
+            // Already have enough data — play immediately
+            doPlay();
+          } else {
+            // Show spinner while loading
+            if (spinner) spinner.style.display = 'flex';
+            if (v.preload === 'none' || !v.src || v.src === window.location.href) {
+              // Lazy load
+              v.preload = 'auto';
+              v.src = v.dataset.src || v.src;
+              v.load();
+            }
+            const onReady = () => {
+              if (spinner) spinner.style.display = 'none';
+              doPlay();
+              v.removeEventListener('canplay', onReady);
+            };
+            v.addEventListener('canplay', onReady);
+          }
+
+          // Preload next TC slide
           const next = e.target.nextElementSibling;
           if (next && !next.classList.contains('yt-slide')) {
             const nv = next.querySelector('video');
-            if (nv && nv.preload === 'none' && nv.dataset.src) {
+            if (nv && nv.dataset.src && (nv.preload === 'none' || !nv.src || nv.src === window.location.href)) {
               nv.preload = 'auto';
               nv.src = nv.dataset.src;
               nv.load();
@@ -3302,13 +3335,13 @@ function setupFeedObserver(wrap) {
           }
         }
 
-        // ── YouTube iframe — autoplay when scrolled in ──
+        // ── YouTube iframe — autoplay unmuted when in view ──
         if (isYT && iframe) {
           const vid = e.target.dataset.ytVideoId;
-          iframe.src = `https://www.youtube.com/embed/${vid}?autoplay=1&mute=1&loop=1&playlist=${vid}&playsinline=1&controls=1&modestbranding=1&rel=0`;
+          iframe.src = `https://www.youtube.com/embed/${vid}?autoplay=1&mute=0&loop=1&playlist=${vid}&playsinline=1&controls=1&modestbranding=1&rel=0&fs=1`;
         }
 
-        // View + monetization tracking
+        // View + monetization + ad tracking
         const postId = e.target.dataset.postId;
         const authorUid = e.target.dataset.authorUid;
         const authorVerified = e.target.dataset.verified === 'true';
@@ -3326,10 +3359,10 @@ function setupFeedObserver(wrap) {
         }
 
       } else {
-        // Pause TC video
+        // Pause TC video + reset
         if (v) { v.pause(); v.currentTime = 0; }
 
-        // Stop YouTube iframe by removing src — saves bandwidth + memory
+        // Stop YouTube iframe
         if (isYT && iframe) {
           const vid = e.target.dataset.ytVideoId;
           iframe.src = `https://www.youtube.com/embed/${vid}?autoplay=0&mute=1&loop=1&playlist=${vid}&playsinline=1&controls=1&modestbranding=1&rel=0`;
@@ -3340,9 +3373,10 @@ function setupFeedObserver(wrap) {
         });
       }
     });
-  }, { threshold: 0.6 });
+  }, { threshold: 0.7 });
 
   wrap.querySelectorAll('.tt-slide, .ad-slide').forEach(s => io.observe(s));
+  wrap._observer = io; // store so background YT appends can observe new slides
 }
 
 // ─── View Tracking ───
@@ -4399,6 +4433,22 @@ function _sanitize(str) {
 
 window.submitComment = async () => {
   if (!currentUser) { openLoginGate(); return; }
+  // Handle YouTube video comments separately
+  if (_commentsPostId && _commentsPostId.startsWith('yt_')) {
+    const inp = document.getElementById('commentInput');
+    const text = inp?.value?.trim();
+    if (!text) return;
+    const videoId = _commentsPostId.slice(3);
+    inp.value = '';
+    const ud = (await getDoc(doc(db,'users',currentUser.uid))).data() || {};
+    await addDoc(collection(db,'ytComments',videoId,'comments'), {
+      text,
+      authorName: ud.displayName || currentUser.displayName || 'User',
+      authorPhoto: ud.photoURL || currentUser.photoURL || '',
+      uid: currentUser.uid, createdAt: serverTimestamp()
+    });
+    return;
+  }
   if (_isSpamming()) { toast('⏳ Slow down! Max 5 comments per minute.'); return; }
   const input = document.getElementById('commentInput');
   const text = _sanitize(input.value);
@@ -5855,7 +5905,7 @@ window.openSearchVideo = async (postId) => {
   if (!post) { toast('Loading...'); return; }
   // Load all videos from same category to allow scrolling
   try {
-    const q = query(collection(db,'posts'), where('type','==','video'), where('category','==',post.category||''), orderBy('createdAt','desc'), limit(30));
+    const q = query(collection(db,'posts'), where('type','==','video'), where('category','==',post.category||''), limit(30));
     const snap = await getDocs(q);
     let posts = snap.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.mediaUrl);
     if (!posts.length) posts = [post];
