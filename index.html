@@ -607,31 +607,10 @@ body{
 
 <!-- VIDEOS / EXPLORE PAGE -->
 <div id="tiktokPage" class="page">
-  <div class="hdr" style="background:rgba(6,6,18,.95);position:sticky;top:0;z-index:10;">
-    <div class="hdr-back" onclick="openPage('home')">←</div>
-    <div class="hdr-title">🔥 Explore</div>
-    <div onclick="refreshFeed()" style="cursor:pointer;font-size:20px;padding:4px 8px;border-radius:50%;background:rgba(255,255,255,.08);line-height:1;" title="Refresh feed">↺</div>
-  </div>
-  <!-- Category filter tabs - horizontal scroll, Random only here -->
-  <div id="exploreTabs" style="display:flex;gap:8px;padding:10px 14px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;background:rgba(6,6,18,.95);border-bottom:1px solid rgba(255,255,255,.05);position:sticky;top:57px;z-index:9;">
-    <button class="etab on" id="etab-all" onclick="switchExploreTab('','🔥','all')">🔥 All</button>
-    <button class="etab" id="etab-Animation" onclick="switchExploreTab('Animation','🎬','Animation')">🎬 Animation</button>
-    <button class="etab" id="etab-Comedy" onclick="switchExploreTab('Comedy','😂','Comedy')">😂 Comedy</button>
-    <button class="etab" id="etab-Music" onclick="switchExploreTab('Music','🎤','Music')">🎤 Music</button>
-    <button class="etab" id="etab-Dance" onclick="switchExploreTab('Dance','💃','Dance')">💃 Dance</button>
-    <button class="etab" id="etab-Fashion" onclick="switchExploreTab('Fashion','👗','Fashion')">👗 Fashion</button>
-    <button class="etab" id="etab-Bible" onclick="switchExploreTab('Bible & Faith','📖','Bible')">📖 Faith</button>
-    <button class="etab" id="etab-Football" onclick="switchExploreTab('Football / News','⚽','Football')">⚽ Football</button>
-    <button class="etab" id="etab-Food" onclick="switchExploreTab('Food','🍽️','Food')">🍽️ Food</button>
-    <button class="etab" id="etab-Art" onclick="switchExploreTab('Art','🎨','Art')">🎨 Art</button>
-    <button class="etab" id="etab-Cars" onclick="switchExploreTab('Cars','🚗','Cars')">🚗 Cars</button>
-    <button class="etab" id="etab-random" onclick="switchExploreTab('random','🎲','random')" style="background:linear-gradient(135deg,rgba(123,0,255,.3),rgba(255,0,200,.3));border-color:rgba(255,0,200,.4);">🎲 Random</button>
-  </div>
-  <!-- Snap feed — full screen, always visible -->
-  <div id="exploreVideoFeed" class="tt-snap" style="display:block;position:fixed;top:0;left:0;right:0;bottom:0;height:100vh;z-index:50;"></div>
-  <!-- kept in DOM so old references don't crash, just hidden -->
-  <div id="exploreVidBack" style="display:none;"></div>
-  <div id="explorePhotoGrid" style="display:none;"></div>
+  <!-- Refresh button floating top-right -->
+  <div onclick="refreshFeed()" style="position:fixed;top:14px;right:14px;z-index:61;cursor:pointer;font-size:22px;width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;color:#fff;border:1px solid rgba(255,255,255,.15);">↺</div>
+  <!-- Feed takes full screen top to bottom above navbar -->
+  <div id="exploreVideoFeed" class="tt-snap" style="position:fixed;top:0;left:0;right:0;bottom:62px;z-index:8;"></div>
 </div>
 
 <!-- UPLOAD PICKER -->
@@ -1410,6 +1389,17 @@ import {
 const CLOUDINARY_CLOUD = "dmhdqx3sw";
 const CLOUDINARY_PRESET = "lnhmkpk0";
 
+// Generate a video thumbnail from a Cloudinary video URL
+function cloudinaryPoster(videoUrl) {
+  if (!videoUrl || !videoUrl.includes('cloudinary.com')) return '';
+  try {
+    // Replace /video/upload/ with /video/upload/so_0,w_720,h_1280,c_fill,f_jpg/
+    return videoUrl
+      .replace('/video/upload/', '/video/upload/so_0,w_720,h_1280,c_fill,f_jpg/')
+      .replace(/\.[^/.]+$/, '.jpg');
+  } catch(e) { return ''; }
+}
+
 // ── YouTube Shorts integration ──
 const YT_API_KEY = "AIzaSyBe0BPq-_pRAx8BLdokpeAdY2f8LgcjBKU";
 const YT_SHORTS_QUOTA_CACHE_KEY = 'tc_yt_cache';
@@ -1432,6 +1422,11 @@ async function uploadToCloudinary(file, onProgress) {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('upload_preset', CLOUDINARY_PRESET);
+  // Auto quality + compress + cap at 720p for fast playback
+  if (file.type.startsWith('video/')) {
+    fd.append('eager', 'f_auto,q_auto:good,w_720,h_1280,c_limit/vc_h264');
+    fd.append('eager_async', 'true');
+  }
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
@@ -2570,18 +2565,30 @@ async function loadCategoryFeed(cat) {
   posts.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
   const oldSnap = document.getElementById('catSnapWrap');
   if(oldSnap) oldSnap.remove();
+  document.getElementById('catBackBtn')?.remove();
+  document.getElementById('catRefreshBtn')?.remove();
+
   const snapWrap = document.createElement('div');
   snapWrap.id = 'catSnapWrap';
   snapWrap.className = 'tt-snap';
-  snapWrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;height:100vh;z-index:50;';
+  snapWrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:62px;z-index:50;';
+
   const catBack = document.createElement('div');
-  catBack.style.cssText = 'position:fixed;top:16px;left:14px;z-index:51;background:rgba(0,0,0,.45);border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-size:20px;';
+  catBack.style.cssText = 'position:fixed;top:16px;left:14px;z-index:51;background:rgba(0,0,0,.5);backdrop-filter:blur(8px);border-radius:50%;width:38px;height:38px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-size:20px;border:1px solid rgba(255,255,255,.15);';
   catBack.innerHTML = '←';
   catBack.id = 'catBackBtn';
-  catBack.onclick = () => { snapWrap.remove(); catBack.remove(); };
+  catBack.onclick = () => { snapWrap.remove(); catBack.remove(); document.getElementById('catRefreshBtn')?.remove(); };
+
+  const catRefresh = document.createElement('div');
+  catRefresh.style.cssText = 'position:fixed;top:16px;right:14px;z-index:51;background:rgba(0,0,0,.5);backdrop-filter:blur(8px);border-radius:50%;width:38px;height:38px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-size:22px;border:1px solid rgba(255,255,255,.15);';
+  catRefresh.innerHTML = '↺';
+  catRefresh.id = 'catRefreshBtn';
+  catRefresh.onclick = () => { snapWrap.remove(); catBack.remove(); catRefresh.remove(); loadCategoryFeed(cat); toast('🔄 Refreshed!'); };
+
   grid.style.display = 'none';
   document.body.appendChild(snapWrap);
   document.body.appendChild(catBack);
+  document.body.appendChild(catRefresh);
 
   let catSlideCount = 0;
   let catYtShorts = [];
@@ -2655,7 +2662,7 @@ async function loadCategoryFeed(cat) {
         attachDoubleTap(img, post.mediaUrl, ()=>openPhotoModal(post));
       } else if(post.type==='video' && post.mediaUrl){
         slide.innerHTML = `
-          <video src="${post.mediaUrl}" loop playsinline preload="none" data-src="${post.mediaUrl}"></video>
+          <video data-src="${post.mediaUrl}" poster="${cloudinaryPoster(post.mediaUrl)}" loop playsinline preload="none"></video>
           <div class="sound-toggle" onclick="toggleFeedSound(this)">🔊</div>
           <div class="vid-spinner"><svg viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="4" stroke-dasharray="80 40" stroke-linecap="round"/></svg></div>
           <div class="pause-overlay"><div class="pause-ico">⏸</div></div>
@@ -2736,24 +2743,26 @@ window.switchContentType = (type) => {
 };
 
 let _feedLoaded = false;
+let _ytNextPageToken = null;
+let _ytLoadingMore = false;
+let _ytLoadingCat = '';
 
 async function loadExploreFeed() {
-  if (_feedLoaded) return; // already loaded — don't freeze on tab switch
+  if (_feedLoaded) return;
   _feedLoaded = true;
   loadTikTokFeed(exploreCategory);
 }
 
 window.refreshFeed = () => {
   _feedLoaded = false;
+  _ytNextPageToken = null;
+  _ytLoadingMore = false;
   _seenPostIds.clear();
-  // Clear YT cache so fresh videos load
   try {
-    Object.keys(localStorage)
-      .filter(k => k.startsWith('tc_yt'))
-      .forEach(k => localStorage.removeItem(k));
+    Object.keys(localStorage).filter(k => k.startsWith('tc_yt')).forEach(k => localStorage.removeItem(k));
   } catch(e) {}
   const wrap = document.getElementById('exploreVideoFeed');
-  if (wrap) wrap.innerHTML = '';
+  if (wrap) { wrap.innerHTML = ''; wrap._observer = null; }
   loadExploreFeed();
   toast('🔄 Feed refreshed!');
 };
@@ -2765,175 +2774,137 @@ async function loadExplorePhotos() { loadTikTokFeed(exploreCategory); }
 
 // ── YouTube Shorts fetcher ──────────────────────────────────────────
 // Fetches Shorts via YouTube Data API v3 with localStorage quota caching
-// ── YouTube massive library fetch ───────────────────────────────
-// 25 diverse queries × 20 results each = up to 500 videos
-// Each search costs 100 quota units. 25 × 100 = 2,500/day well within 10,000 free limit.
-// Stats fetch (videos.list) costs 1 unit per call = 25 more units. Total: ~2,525/day.
-const YT_ALL_QUERIES = [
-  // Trending / viral
-  'viral shorts 2026', 'trending shorts today', 'most viewed shorts',
-  // Entertainment
-  'funny shorts viral', 'comedy shorts', 'prank shorts',
-  // Music & Dance
-  'dance shorts trending', 'music shorts viral', 'afrobeats shorts',
-  // Talent & Skills
-  'talent shorts amazing', 'skills shorts satisfying', 'art shorts timelapse',
-  // Lifestyle
-  'food shorts satisfying', 'cooking shorts quick', 'fitness shorts workout',
-  // Gaming
-  'gaming shorts funny', 'mobile gaming shorts',
-  // Education & Facts
-  'facts shorts mindblowing', 'science shorts amazing',
-  // Animals & Nature
-  'cute animals shorts', 'nature shorts beautiful',
-  // Sports
-  'sports shorts highlights', 'football shorts skills',
-  // Fashion & Beauty
-  'fashion shorts outfit', 'beauty shorts transformation'
-];
+// ── YouTube: categorized queries ─────────────────────────────────
+function getTodayKey() { return new Date().toISOString().slice(0, 10); }
+const YT_LIBRARY_KEY = 'tc_yt_library'; // kept for category feed cache lookup
+const YT_CATEGORY_QUERIES = {
+  '':         ['viral shorts 2026', 'trending shorts today', 'funny shorts viral', 'amazing shorts'],
+  'Animation':['animation shorts', 'cartoon shorts funny', 'anime shorts'],
+  'Comedy':   ['comedy shorts viral', 'funny shorts 2026', 'prank shorts'],
+  'Music':    ['music shorts viral', 'afrobeats shorts', 'song shorts trending'],
+  'Dance':    ['dance shorts trending', 'tiktok dance shorts', 'viral dance shorts'],
+  'Fashion':  ['fashion shorts outfit', 'style shorts viral', 'ootd shorts'],
+  'Bible & Faith': ['faith shorts christian', 'gospel shorts', 'bible verse shorts'],
+  'Football / News': ['football skills shorts', 'soccer goals shorts', 'football shorts viral'],
+  'Food':     ['food shorts satisfying', 'cooking shorts quick', 'recipe shorts'],
+  'Art':      ['art shorts timelapse', 'drawing shorts', 'creative shorts'],
+  'Cars':     ['cars shorts viral', 'drift shorts', 'supercar shorts'],
+};
 
-function getTodayKey() {
-  return new Date().toISOString().slice(0, 10);
+// Per-category cache: { date, nextPageToken, data[] }
+const YT_CAT_CACHE_PREFIX = 'tc_ytcat_';
+
+function getYtCacheKey(cat) {
+  return YT_CAT_CACHE_PREFIX + (cat||'home') + '_' + getTodayKey();
 }
 
-function getDailyQuery(cat) {
-  // Not used for main fetch anymore — kept for category-specific calls
-  if (cat) return cat + ' shorts';
-  return 'viral shorts';
-}
+// Fetch 20 YT shorts for a category, supports pagination for "load more"
+async function fetchYTPage(cat, pageToken = null) {
+  const queries = YT_CATEGORY_QUERIES[cat] || YT_CATEGORY_QUERIES[''];
+  // Pick a query based on page (rotate through queries on subsequent loads)
+  const qIndex = pageToken ? (parseInt(pageToken.split('_')[0]) || 0) : 0;
+  const q = queries[qIndex % queries.length];
+  const nextQIndex = (qIndex + 1) % queries.length;
 
-// Master library stored in localStorage — rebuilt once per day
-const YT_LIBRARY_KEY = 'tc_yt_library';
-
-async function fetchYouTubeLibrary() {
-  const todayKey = getTodayKey();
-
-  // Return cached library if it's from today
-  try {
-    const cached = JSON.parse(localStorage.getItem(YT_LIBRARY_KEY) || 'null');
-    if (cached && cached.date === todayKey && cached.data?.length >= 50) {
-      console.log(`✅ YouTube library: ${cached.data.length} videos from cache — shuffling`);
-      return [...cached.data].sort(() => Math.random() - 0.5);
-    }
-  } catch(e) {}
-
-  // Clear old cache
-  try {
-    [YT_LIBRARY_KEY, ...Object.keys(localStorage).filter(k => k.startsWith('tc_yt_cache'))].forEach(k => {
-      const v = JSON.parse(localStorage.getItem(k) || 'null');
-      if (v && v.date && v.date !== todayKey) localStorage.removeItem(k);
-    });
-  } catch(e) {}
-
-  console.log('🔄 YouTube: fetching fresh library from', YT_ALL_QUERIES.length, 'queries...');
-
-  // Fetch all queries in parallel (YouTube API handles concurrent requests fine)
-  const seenVideoIds = new Set();
-  const allShorts = [];
-
-  const queryBatches = [];
-  for (let i = 0; i < YT_ALL_QUERIES.length; i += 5) {
-    queryBatches.push(YT_ALL_QUERIES.slice(i, i + 5));
-  }
-
-  for (const batch of queryBatches) {
-    const batchResults = await Promise.all(batch.map(async q => {
-      try {
-        const params = new URLSearchParams({
-          part: 'snippet', q: q, type: 'video',
-          videoDuration: 'short', maxResults: '20',
-          order: 'date', key: YT_API_KEY
-        });
-        const res = await fetch('https://www.googleapis.com/youtube/v3/search?' + params);
-        const data = await res.json();
-        if (data.error) { console.warn('YT error for', q, ':', data.error.message); return []; }
-        return (data.items || []).filter(item => item.id?.videoId && !seenVideoIds.has(item.id.videoId));
-      } catch(e) { return []; }
-    }));
-
-    // Collect unique videos from this batch
-    const batchItems = batchResults.flat();
-    const batchVideoIds = batchItems.map(i => i.id.videoId).filter(id => !seenVideoIds.has(id));
-    batchVideoIds.forEach(id => seenVideoIds.add(id));
-    const uniqueItems = batchItems.filter(i => batchVideoIds.includes(i.id.videoId));
-
-    if (!uniqueItems.length) continue;
-
-    // Fetch stats for this batch
-    try {
-      const statsParams = new URLSearchParams({
-        part: 'statistics', id: uniqueItems.map(i => i.id.videoId).join(','), key: YT_API_KEY
-      });
-      const statsRes = await fetch('https://www.googleapis.com/youtube/v3/videos?' + statsParams);
-      const statsData = await statsRes.json();
-      const statsMap = {};
-      (statsData.items || []).forEach(v => { statsMap[v.id] = v.statistics; });
-
-      uniqueItems.forEach(item => {
-        const vid = item.id.videoId;
-        const stats = statsMap[vid] || {};
-        allShorts.push({
-          _isYouTube: true,
-          id: 'yt_' + vid,
-          videoId: vid,
-          authorName: item.snippet.channelTitle || 'YouTube Creator',
-          channelId: item.snippet.channelId,
-          title: item.snippet.title || '',
-          thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url || '',
-          likeCount: parseInt(stats.likeCount || 0),
-          viewCount: parseInt(stats.viewCount || 0),
-          commentCount: parseInt(stats.commentCount || 0),
-        });
-      });
-    } catch(e) {
-      // Stats failed — add without stats
-      uniqueItems.forEach(item => {
-        const vid = item.id.videoId;
-        allShorts.push({
-          _isYouTube: true, id: 'yt_' + vid, videoId: vid,
-          authorName: item.snippet.channelTitle || 'YouTube Creator',
-          channelId: item.snippet.channelId, title: item.snippet.title || '',
-          thumbnail: item.snippet.thumbnails?.high?.url || '', likeCount: 0, viewCount: 0, commentCount: 0,
-        });
-      });
-    }
-
-    // Small delay between batches to be polite to the API
-    await new Promise(r => setTimeout(r, 200));
-  }
-
-  console.log(`✅ YouTube library built: ${allShorts.length} unique videos`);
-
-  // Save to localStorage — full library for the day
-  try {
-    localStorage.setItem(YT_LIBRARY_KEY, JSON.stringify({ date: todayKey, data: allShorts }));
-  } catch(e) {
-    console.warn('localStorage full — saving trimmed library');
-    try { localStorage.setItem(YT_LIBRARY_KEY, JSON.stringify({ date: todayKey, data: allShorts.slice(0, 100) })); } catch(e2) {}
-  }
-
-  // Return shuffled
-  return [...allShorts].sort(() => Math.random() - 0.5);
-}
-
-// Keep old fetchYouTubeShorts for category feeds (smaller targeted fetch)
-async function fetchYouTubeShorts(searchQuery, maxResults = 20) {
   try {
     const params = new URLSearchParams({
-      part: 'snippet', q: searchQuery + ' shorts', type: 'video',
-      videoDuration: 'short', maxResults: String(maxResults),
-      order: 'date', key: YT_API_KEY
+      part: 'snippet', q: q + ' shorts', type: 'video',
+      videoDuration: 'short', maxResults: '20', order: 'date',
+      key: YT_API_KEY,
+      ...(pageToken && pageToken.includes('|') ? { pageToken: pageToken.split('|')[1] } : {})
     });
     const res = await fetch('https://www.googleapis.com/youtube/v3/search?' + params);
     const data = await res.json();
-    if (data.error) return [];
-    return (data.items || []).filter(i => i.id?.videoId).map(item => ({
-      _isYouTube: true, id: 'yt_' + item.id.videoId, videoId: item.id.videoId,
-      authorName: item.snippet.channelTitle || 'YouTube Creator',
-      channelId: item.snippet.channelId, title: item.snippet.title || '',
-      thumbnail: item.snippet.thumbnails?.high?.url || '', likeCount: 0, viewCount: 0, commentCount: 0,
+    if (data.error) { console.warn('YT error:', data.error.message); return { items: [], nextPageToken: null }; }
+
+    const items = (data.items || []).filter(i => i.id?.videoId);
+    if (!items.length) return { items: [], nextPageToken: null };
+
+    // Fetch stats for these videos
+    const statsParams = new URLSearchParams({
+      part: 'statistics', id: items.map(i => i.id.videoId).join(','), key: YT_API_KEY
+    });
+    let statsMap = {};
+    try {
+      const sr = await fetch('https://www.googleapis.com/youtube/v3/videos?' + statsParams);
+      const sd = await sr.json();
+      (sd.items || []).forEach(v => { statsMap[v.id] = v.statistics; });
+    } catch(e) {}
+
+    const shorts = items.map(item => {
+      const vid = item.id.videoId;
+      const s = statsMap[vid] || {};
+      return {
+        _isYouTube: true, id: 'yt_' + vid, videoId: vid,
+        category: cat,
+        authorName: item.snippet.channelTitle || 'YouTube Creator',
+        channelId: item.snippet.channelId,
+        title: item.snippet.title || '',
+        thumbnail: item.snippet.thumbnails?.high?.url || '',
+        likeCount: parseInt(s.likeCount || 0),
+        viewCount: parseInt(s.viewCount || 0),
+        commentCount: parseInt(s.commentCount || 0),
+      };
+    });
+
+    // Next page token encodes query index + actual token
+    const nextToken = data.nextPageToken
+      ? `${nextQIndex}|${data.nextPageToken}`
+      : `${nextQIndex}|`;
+
+    return { items: shorts, nextPageToken: nextToken };
+  } catch(e) {
+    console.warn('YT fetch failed:', e.message);
+    return { items: [], nextPageToken: null };
+  }
+}
+
+// Load initial 20 YT videos for a category (uses cache if fresh)
+async function fetchYouTubeInitial(cat) {
+  const cacheKey = getYtCacheKey(cat);
+  try {
+    const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+    if (cached && cached.data?.length) {
+      console.log('YT cache hit:', cat || 'home', cached.data.length, 'videos');
+      return { items: [...cached.data].sort(() => Math.random() - 0.5), nextPageToken: cached.nextPageToken };
+    }
+  } catch(e) {}
+
+  // Clear old cache keys
+  try {
+    const today = getTodayKey();
+    Object.keys(localStorage).filter(k => k.startsWith(YT_CAT_CACHE_PREFIX) && !k.includes(today))
+      .forEach(k => localStorage.removeItem(k));
+  } catch(e) {}
+
+  const result = await fetchYTPage(cat);
+
+  // Cache result for the day
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify({
+      date: getTodayKey(), data: result.items, nextPageToken: result.nextPageToken
     }));
-  } catch(e) { return []; }
+  } catch(e) {}
+
+  return result;
+}
+
+// Load more YT videos (called when user nears end of feed)
+async function fetchYouTubeMore(cat, pageToken) {
+  if (!pageToken) return { items: [], nextPageToken: null };
+  return fetchYTPage(cat, pageToken);
+}
+
+// Keep old fetchYouTubeLibrary as alias for category feeds (uses initial fetch)
+async function fetchYouTubeLibrary() {
+  const result = await fetchYouTubeInitial('');
+  return result.items;
+}
+
+// Keep fetchYouTubeShorts for category feed
+async function fetchYouTubeShorts(cat, maxResults = 20) {
+  const result = await fetchYouTubeInitial(cat);
+  return result.items.slice(0, maxResults);
 }
 
 // Set of subscribed channel IDs (persisted in localStorage)
@@ -3099,7 +3070,8 @@ function buildYouTubeSlide(yt) {
   return slide;
 }
 
-// Session-level seen post tracker — cleared on full page reload, persists across tab switches
+// Session-level seen post tracker — only prevents repeats WITHIN one feed load
+// Clears on refresh so users always get fresh TC videos
 const _seenPostIds = new Set();
 
 async function loadTikTokFeed(cat) {
@@ -3133,19 +3105,14 @@ async function loadTikTokFeed(cat) {
     [...followingPosts, ...otherPosts].forEach(p => { if (!merged.has(p.id)) merged.set(p.id, p); });
     let allPosts = [...merged.values()];
 
-    // Sort: boosted first, then newest
-    allPosts.sort((a,b) => {
-      if ((b.boosted||false) !== (a.boosted||false)) return (b.boosted ? 1 : 0) - (a.boosted ? 1 : 0);
-      const at = a.createdAt?.seconds || 0;
-      const bt = b.createdAt?.seconds || 0;
-      return bt - at;
-    });
+    // Sort: boosted first, then shuffle the rest for variety (TikTok-style)
+    const boosted = allPosts.filter(p => p.boosted);
+    const rest = allPosts.filter(p => !p.boosted).sort(() => Math.random() - 0.5);
+    const postsToShow = [...boosted, ...rest];
 
-    // 4. Filter already-seen posts this session (no repeats like TikTok)
-    const freshPosts = allPosts.filter(p => !_seenPostIds.has(p.id));
-    // If everything's been seen, reset and show all again (user has watched everything)
-    const postsToShow = freshPosts.length > 0 ? freshPosts : allPosts;
-    postsToShow.forEach(p => _seenPostIds.add(p.id));
+    if (!postsToShow.length && !currentUser) {
+      // not logged in and no posts — show YT only
+    }
 
     // 5. Show TC posts immediately — don't wait for YouTube
     wrap.innerHTML = '';
@@ -3179,7 +3146,7 @@ async function loadTikTokFeed(cat) {
       const isBoosted = p._boosted || p.boosted || false;
       const avSrc = p.authorPhoto || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.authorName||'U')}&background=0e0e1f&color=00c6ff`;
       slide.innerHTML = `
-        <video src="${p.mediaUrl}" loop playsinline preload="none" data-src="${p.mediaUrl}"></video>
+        <video data-src="${p.mediaUrl}" poster="${cloudinaryPoster(p.mediaUrl)}" loop playsinline preload="none"></video>
         <div class="sound-toggle" onclick="toggleFeedSound(this)">🔊</div>
         <div class="vid-spinner"><svg viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="4" stroke-dasharray="80 40" stroke-linecap="round"/></svg></div>
         <div class="pause-overlay"><div class="pause-ico">⏸</div></div>
@@ -3225,46 +3192,34 @@ async function loadTikTokFeed(cat) {
       appendSlide(slide);
     }
 
-    // Start observer NOW so TC videos play immediately while YT loads in background
     setupFeedObserver(wrap);
 
-    // Fetch YouTube library in background — append to feed when ready without blocking
-    fetchYouTubeLibrary().then(ytShorts => {
+    // Fetch YouTube in background — append after TC videos, observe new slides
+    _ytLoadingCat = cat || '';
+    fetchYouTubeInitial(cat||'').then(ytResult => {
+      _ytNextPageToken = ytResult.nextPageToken;
+      const ytShorts = ytResult.items;
       if (!ytShorts.length) return;
-      // Remove the "loading YT" placeholder if it was shown
-      const placeholder = wrap.querySelector('.tt-empty-slide');
-      if (placeholder) placeholder.closest('.tt-slide')?.remove();
 
-      // If no TC posts were shown, clear and fill with YT
-      if (!postsToShow.length) { wrap.innerHTML = ''; totalSlideCount = 0; }
+      // Remove loading placeholder if shown
+      wrap.querySelector('.tt-empty-slide')?.closest('.tt-slide')?.remove();
 
-      // Interleave YT into existing feed — insert every 3 slides from where TC ended
-      let ytIdx = 0;
-      const existingSlides = wrap.querySelectorAll('.tt-slide:not(.yt-slide), .ad-slide');
-      const insertAt = [];
-      existingSlides.forEach((s, i) => {
-        if ((i + 1) % 3 === 0) insertAt.push(s);
-      });
-      insertAt.forEach(anchor => {
-        if (ytIdx < ytShorts.length) {
-          anchor.insertAdjacentElement('afterend', buildYouTubeSlide(ytShorts[ytIdx++]));
+      const endSentinel = wrap.querySelector('.yt-end-sentinel');
+      ytShorts.forEach((yt, i) => {
+        const slide = buildYouTubeSlide(yt);
+        // Insert before sentinel (or just append)
+        if (endSentinel) endSentinel.before(slide);
+        else wrap.appendChild(slide);
+        // Ad every 5 YT slides
+        if ((i + 1) % 5 === 0 && !isPremiumUser) {
+          const ad = makeAdSlide();
+          if (endSentinel) endSentinel.before(ad);
+          else wrap.appendChild(ad);
+          wrap._observer?.observe(ad);
         }
+        wrap._observer?.observe(slide);
       });
-
-      // Append remaining at end
-      while (ytIdx < ytShorts.length) {
-        if (totalSlideCount > 0 && totalSlideCount % 5 === 0 && !isPremiumUser) {
-          wrap.appendChild(makeAdSlide()); totalSlideCount++;
-        }
-        wrap.appendChild(buildYouTubeSlide(ytShorts[ytIdx++]));
-        totalSlideCount++;
-      }
-
-      // Re-observe new slides
-      const io = wrap._observer;
-      if (io) wrap.querySelectorAll('.yt-slide').forEach(s => io.observe(s));
-      else setupFeedObserver(wrap);
-    }).catch(() => {}); // YT failure is non-fatal
+    }).catch(e => console.warn('YT background fetch failed:', e.message));
 
   } catch(err) {
     console.error('Feed error:', err);
@@ -3273,11 +3228,11 @@ async function loadTikTokFeed(cat) {
 }
 
 function setupFeedObserver(wrap) {
-  // Eagerly preload first 2 slides
+  // Eagerly preload first 2 video slides so first video plays instantly
   wrap.querySelectorAll('video').forEach((v, i) => {
     if (i < 2 && v.dataset.src) {
-      v.preload = 'auto';
       v.src = v.dataset.src;
+      v.preload = 'auto';
       v.load();
     }
   });
@@ -3293,43 +3248,33 @@ function setupFeedObserver(wrap) {
       if (e.isIntersecting) {
         // ── TalentClip video ──
         if (v) {
+          // 1. Set src from data-src FIRST (before anything else)
+          if (v.dataset.src && (!v.src || v.src === window.location.href || v.getAttribute('src') === null)) {
+            v.src = v.dataset.src;
+            v.preload = 'auto';
+            v.load();
+          }
+
+          // 2. Then attach events and mute
           attachVideoEvents(e.target);
           applyMuteToSlide(e.target);
 
-          const doPlay = () => {
-            v.play().catch(() => {
-              // If autoplay blocked, show a tap-to-play overlay
-              if (spinner) spinner.style.display = 'none';
-            });
-          };
-
+          // 3. Play when ready
           if (v.readyState >= 3) {
-            // Already have enough data — play immediately
-            doPlay();
+            if (spinner) spinner.style.display = 'none';
+            v.play().catch(() => {});
           } else {
-            // Show spinner while loading
             if (spinner) spinner.style.display = 'flex';
-            if (v.preload === 'none' || !v.src || v.src === window.location.href) {
-              // Lazy load
-              v.preload = 'auto';
-              v.src = v.dataset.src || v.src;
-              v.load();
-            }
-            const onReady = () => {
-              if (spinner) spinner.style.display = 'none';
-              doPlay();
-              v.removeEventListener('canplay', onReady);
-            };
-            v.addEventListener('canplay', onReady);
+            v.play().catch(() => {}); // browsers will play when ready
           }
 
-          // Preload next TC slide
+          // 4. Preload next slide
           const next = e.target.nextElementSibling;
-          if (next && !next.classList.contains('yt-slide')) {
+          if (next) {
             const nv = next.querySelector('video');
-            if (nv && nv.dataset.src && (nv.preload === 'none' || !nv.src || nv.src === window.location.href)) {
-              nv.preload = 'auto';
+            if (nv && nv.dataset.src && (!nv.src || nv.src === window.location.href)) {
               nv.src = nv.dataset.src;
+              nv.preload = 'auto';
               nv.load();
             }
           }
@@ -3376,7 +3321,29 @@ function setupFeedObserver(wrap) {
   }, { threshold: 0.7 });
 
   wrap.querySelectorAll('.tt-slide, .ad-slide').forEach(s => io.observe(s));
-  wrap._observer = io; // store so background YT appends can observe new slides
+  wrap._observer = io;
+
+  // Sentinel — YT background fetch inserts before this, infinite scroll triggers from it
+  const endSentinel = document.createElement('div');
+  endSentinel.className = 'yt-end-sentinel';
+  endSentinel.style.height = '2px';
+  wrap.appendChild(endSentinel);
+
+  const endIO = new IntersectionObserver(async entries => {
+    if (!entries[0].isIntersecting || _ytLoadingMore || !_ytNextPageToken) return;
+    _ytLoadingMore = true;
+    try {
+      const result = await fetchYouTubeMore(_ytLoadingCat||'', _ytNextPageToken);
+      _ytNextPageToken = result.nextPageToken;
+      result.items.forEach(yt => {
+        const slide = buildYouTubeSlide(yt);
+        endSentinel.before(slide);
+        io.observe(slide);
+      });
+    } catch(e) { console.warn('Load more failed:', e); }
+    _ytLoadingMore = false;
+  }, { threshold: 1 });
+  endIO.observe(endSentinel);
 }
 
 // ─── View Tracking ───
@@ -4887,7 +4854,7 @@ async function trimVideoTo60(file){
       const ctx=canvas.getContext('2d');
       const stream=canvas.captureStream(25);
       const mimeType=MediaRecorder.isTypeSupported('video/webm;codecs=vp9')?'video/webm;codecs=vp9':'video/webm';
-      const rec=new MediaRecorder(stream,{mimeType,videoBitsPerSecond:8000000});
+      const rec=new MediaRecorder(stream,{mimeType,videoBitsPerSecond:2500000});
       const chunks=[];
       rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};
       rec.onstop=()=>{URL.revokeObjectURL(url);resolve(new Blob(chunks,{type:'video/webm'}));};
@@ -5441,7 +5408,7 @@ async function burnEditorToVideo(file, settings) {
 
       const recorder = new MediaRecorder(finalStream, {
         mimeType,
-        videoBitsPerSecond: 8000000,  // 8Mbps video
+        videoBitsPerSecond: 2500000,  // 8Mbps video
         audioBitsPerSecond: 128000    // 128kbps audio
       });
       const chunks = [];
@@ -5978,6 +5945,7 @@ window.openPage = (id) => {
   if(id !== 'categoryPage') {
     document.getElementById('catSnapWrap')?.remove();
     document.getElementById('catBackBtn')?.remove();
+    document.getElementById('catRefreshBtn')?.remove();
   }
 
   // Close any floating overlays that may cover the screen
