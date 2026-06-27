@@ -70,44 +70,78 @@
   ╔════════════════════════════════════════════════════════════════╗
   ║  CAMERA + MICROPHONE PERMISSIONS — REQUIRED FOR GO LIVE         ║
   ╠════════════════════════════════════════════════════════════════╣
-  ║  "NotAllowedError: Permission denied" when tapping Go Live      ║
-  ║  means the Android app itself was never granted camera/mic      ║
-  ║  access — this is separate from the WebView JS permission       ║
-  ║  prompt and must be declared natively.                          ║
+  ║  "Permission not turned on" in Android Studio means the WebView ║
+  ║  never asked Android for camera/mic. Two files need updating:   ║
   ║                                                                  ║
-  ║  1) In android/app/src/main/AndroidManifest.xml, add ABOVE      ║
-  ║     the <application> tag:                                      ║
+  ║  ── FILE 1: AndroidManifest.xml ──────────────────────────────  ║
+  ║  Add these ABOVE the <application> tag:                          ║
   ║                                                                  ║
-  ║     <uses-permission android:name="android.permission.CAMERA"/> ║
-  ║     <uses-permission android:name="android.permission.RECORD_AUDIO"/>║
-  ║     <uses-feature android:name="android.hardware.camera"        ║
-  ║       android:required="false"/>                                ║
-  ║     <uses-feature android:name="android.hardware.camera.autofocus"║
-  ║       android:required="false"/>                                ║
+  ║  <uses-permission android:name="android.permission.CAMERA"/>     ║
+  ║  <uses-permission android:name="android.permission.RECORD_AUDIO"/>║
+  ║  <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>║
+  ║  <uses-feature android:name="android.hardware.camera"            ║
+  ║    android:required="false"/>                                    ║
+  ║  <uses-feature android:name="android.hardware.camera.autofocus" ║
+  ║    android:required="false"/>                                    ║
   ║                                                                  ║
-  ║  2) Capacitor's WebView needs to forward the browser's           ║
-  ║     getUserMedia() permission request to Android's runtime       ║
-  ║     permission system. In MainActivity.java, override            ║
-  ║     onShowFileChooser is NOT enough — you need a                ║
-  ║     WebChromeClient.onPermissionRequest override:                ║
+  ║  ── FILE 2: MainActivity.java ─────────────────────────────────  ║
+  ║  Replace your ENTIRE MainActivity.java with this:                ║
   ║                                                                  ║
-  ║     getBridge().getWebView().setWebChromeClient(                 ║
-  ║       new BridgeWebChromeClient(getBridge()) {                  ║
-  ║         @Override                                               ║
-  ║         public void onPermissionRequest(                        ║
-  ║             final PermissionRequest request) {                  ║
-  ║           runOnUiThread(() -> request.grant(request.getResources()));║
-  ║         }                                                       ║
-  ║       }                                                          ║
-  ║     );                                                          ║
+  ║  package com.talentclip.app;                                     ║
   ║                                                                  ║
-  ║  3) Also request the runtime permission on first launch          ║
-  ║     (Android 6.0+) using ActivityCompat.requestPermissions       ║
-  ║     for Manifest.permission.CAMERA and RECORD_AUDIO.             ║
+  ║  import android.Manifest;                                        ║
+  ║  import android.content.pm.PackageManager;                       ║
+  ║  import android.os.Bundle;                                       ║
+  ║  import android.webkit.PermissionRequest;                        ║
+  ║  import android.webkit.WebChromeClient;                          ║
+  ║  import androidx.core.app.ActivityCompat;                        ║
+  ║  import androidx.core.content.ContextCompat;                     ║
+  ║  import com.getcapacitor.BridgeActivity;                         ║
+  ║  import com.getcapacitor.BridgeWebChromeClient;                  ║
   ║                                                                  ║
-  ║  4) If using @capacitor/camera or a live-streaming plugin        ║
-  ║     instead of raw getUserMedia(), check that plugin's own       ║
-  ║     setup docs — they often handle steps 1-3 for you.            ║
+  ║  public class MainActivity extends BridgeActivity {              ║
+  ║    private static final int PERM_REQ = 100;                      ║
+  ║                                                                  ║
+  ║    @Override                                                     ║
+  ║    protected void onCreate(Bundle savedInstanceState) {          ║
+  ║      super.onCreate(savedInstanceState);                         ║
+  ║                                                                  ║
+  ║      // 1. Allow media autoplay without gesture                  ║
+  ║      getBridge().getWebView()                                    ║
+  ║        .getSettings()                                            ║
+  ║        .setMediaPlaybackRequiresUserGesture(false);              ║
+  ║                                                                  ║
+  ║      // 2. Forward browser camera/mic requests to Android        ║
+  ║      getBridge().getWebView().setWebChromeClient(                ║
+  ║        new BridgeWebChromeClient(getBridge()) {                  ║
+  ║          @Override                                               ║
+  ║          public void onPermissionRequest(PermissionRequest req) {║
+  ║            req.grant(req.getResources());                        ║
+  ║          }                                                       ║
+  ║        }                                                         ║
+  ║      );                                                          ║
+  ║                                                                  ║
+  ║      // 3. Ask for runtime permissions at startup                ║
+  ║      String[] perms = {                                          ║
+  ║        Manifest.permission.CAMERA,                               ║
+  ║        Manifest.permission.RECORD_AUDIO                          ║
+  ║      };                                                          ║
+  ║      boolean needsRequest = false;                               ║
+  ║      for (String p : perms) {                                    ║
+  ║        if (ContextCompat.checkSelfPermission(this, p)            ║
+  ║            != PackageManager.PERMISSION_GRANTED) {               ║
+  ║          needsRequest = true; break;                             ║
+  ║        }                                                         ║
+  ║      }                                                           ║
+  ║      if (needsRequest) {                                         ║
+  ║        ActivityCompat.requestPermissions(this, perms, PERM_REQ); ║
+  ║      }                                                           ║
+  ║    }                                                             ║
+  ║  }                                                               ║
+  ║                                                                  ║
+  ║  After making these changes:                                     ║
+  ║  Build → Clean Project → Rebuild Project → Run on device        ║
+  ║  First launch will show Android's "Allow camera/mic?" popup.    ║
   ╚════════════════════════════════════════════════════════════════╝
 -->
 <!--
@@ -136,7 +170,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
 <title>TalentClip</title>
 
 <link rel="manifest" href="/TalentClip/manifest.json">
@@ -246,7 +280,7 @@ body{
 .hdr-menu{font-size:24px;cursor:pointer;color:#fff;min-width:30px;text-align:right;}
 
 /* ── Navbar — TikTok style ── */
-.navbar{position:fixed;bottom:0;left:0;right:0;background:rgba(6,6,18,0.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid rgba(255,255,255,0.06);display:flex;z-index:200;height:62px;padding-bottom:env(safe-area-inset-bottom);}
+.navbar{position:fixed;bottom:0;left:0;right:0;background:rgba(6,6,18,0.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid rgba(255,255,255,0.06);display:flex;z-index:200;height:62px;padding-bottom:env(safe-area-inset-bottom);transform:translateZ(0);will-change:transform;}
 .nav-item{flex:1;padding:8px 0 4px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;color:rgba(255,255,255,.4);font-size:10px;font-weight:700;letter-spacing:.5px;transition:all .2s;-webkit-tap-highlight-color:transparent;text-transform:uppercase;}
 .nav-item.on{color:#fff;}
 .nav-item .ni{font-size:22px;transition:transform .2s;}
@@ -419,9 +453,9 @@ body{
 .chat-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;}
 .chat-time{font-size:11px;color:var(--muted);}
 .chat-unread{background:var(--primary);color:#fff;font-size:10px;font-weight:800;border-radius:10px;padding:2px 7px;min-width:18px;text-align:center;}
-.msg-bubble{max-width:78%;padding:10px 14px;border-radius:18px;font-size:14px;line-height:1.5;word-break:break-word;}
-.msg-out{align-self:flex-end;background:var(--chat-out-bg,linear-gradient(135deg,#00c6ff,#7b00ff));color:#fff;border-bottom-right-radius:4px;}
-.msg-in{align-self:flex-start;background:rgba(255,255,255,.08);color:var(--text);border-bottom-left-radius:4px;}
+.msg-bubble{max-width:78%;padding:10px 14px;border-radius:18px;font-size:14px;line-height:1.5;word-break:break-word;position:relative;z-index:1;}
+.msg-out{align-self:flex-end;background:var(--chat-out-bg,linear-gradient(135deg,#00c6ff,#7b00ff));color:#fff;border-bottom-right-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.4);}
+.msg-in{align-self:flex-start;background:rgba(30,30,50,.85);color:#fff;border-bottom-left-radius:4px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 2px 8px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.1);}
 .msg-time{font-size:10px;opacity:.6;margin-top:4px;text-align:right;}
 .msg-row{display:flex;flex-direction:column;}
 .msg-row.out{align-items:flex-end;}
@@ -545,6 +579,13 @@ body{
 @keyframes livePulse{0%,100%{box-shadow:0 0 0 0 rgba(255,0,0,.6);}50%{box-shadow:0 0 0 8px rgba(255,0,0,0);}}
 @keyframes floatUp{0%{opacity:1;transform:translateY(0) scale(1);}100%{opacity:0;transform:translateY(-120px) scale(1.6);}}
 @keyframes fadeInUp{0%{opacity:0;transform:translateY(8px);}100%{opacity:1;transform:translateY(0);}}
+
+/* Live effects strip */
+.live-fx{display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;flex-shrink:0;}
+.live-fx-lbl{font-size:10px;font-weight:700;color:rgba(255,255,255,.6);}
+.live-fx.on .live-fx-lbl{color:#fff;}
+.live-fx > div:first-child{border:3px solid transparent;transition:border-color .2s;}
+.live-fx.on > div:first-child{border-color:#fff !important;box-shadow:0 0 12px rgba(255,255,255,.5);}
 .verified-large{width:24px;height:24px;margin-left:6px;}
 .prof-name-row{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;}
 
@@ -891,7 +932,7 @@ body{
       <span onclick="lgTogglePass('lgLoginPass',this)" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:18px;color:var(--muted);">👁</span>
     </div>
     <button onclick="loginWithEmail()" class="lg-btn" style="margin-top:2px;">🔐 Sign In</button>
-    <div onclick="lgForgotPassword()" style="text-align:center;font-size:12px;color:var(--primary);cursor:pointer;text-decoration:underline;">Forgot password?</div>
+    <div onclick="lgForgotPassword()" style="text-align:center;font-size:12px;color:var(--primary);cursor:pointer;text-decoration:underline;">Forgot password? (check spam folder too)</div>
   </div>
 
   <!-- Sign Up form -->
@@ -908,24 +949,65 @@ body{
     <button onclick="signUpWithEmail()" class="lg-btn" style="background:linear-gradient(135deg,#7b00ff,#ff00c8);margin-top:2px;">🚀 Create Account</button>
   </div>
 
-  <!-- Divider -->
-  <div style="display:flex;align-items:center;gap:10px;width:100%;max-width:320px;">
+  <!-- Divider — hidden on native Android builds, see googleLoginGate setup below -->
+  <div id="lgGoogleDivider" style="display:flex;align-items:center;gap:10px;width:100%;max-width:320px;">
     <div style="flex:1;height:1px;background:rgba(255,255,255,.1);"></div>
     <span style="font-size:12px;color:var(--muted);">or</span>
     <div style="flex:1;height:1px;background:rgba(255,255,255,.1);"></div>
   </div>
 
-  <!-- Google button -->
-  <button onclick="loginUser()" style="width:100%;max-width:320px;padding:14px 20px;border-radius:14px;border:1.5px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:14px;font-family:'Outfit',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;">
+  <!-- Google button — only shown on web. Google's redirect-based sign-in
+       can't complete inside a Capacitor WebView (no real HTTPS origin to
+       bounce back to), so on native builds this is hidden in favor of
+       email/password, which works everywhere with zero extra setup. -->
+  <button id="lgGoogleBtn" onclick="loginUser()" style="width:100%;max-width:320px;padding:14px 20px;border-radius:14px;border:1.5px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:14px;font-family:'Outfit',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;">
     <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.1-2.7-.1-4z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 15.1 18.9 12 24 12c3.1 0 5.8 1.1 8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.8 13.6-4.7l-6.3-5.2C29.3 35.5 26.8 36 24 36c-5.2 0-9.6-2.9-11.3-7H6.2C9.5 39.4 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20H24v8h11.3c-.8 2.2-2.3 4.1-4.2 5.4l6.3 5.2C41.2 35.4 44 30.1 44 24c0-1.3-.1-2.7-.4-4z"/></svg>
     Continue with Google
   </button>
+
+  <!-- Native-only note shown in place of the Google button -->
+  <div id="lgNativeNote" style="display:none;width:100%;max-width:320px;background:rgba(0,198,255,.08);border:1px solid rgba(0,198,255,.2);border-radius:14px;padding:12px 16px;font-size:12px;color:var(--muted);line-height:1.6;">
+    💡 Use email &amp; password to sign in on the app. Google sign-in is available on our website.
+  </div>
 
   <div style="font-size:11px;color:var(--muted);line-height:1.8;text-align:center;">
     By continuing you agree to our
     <span style="color:var(--primary);cursor:pointer;text-decoration:underline;" onclick="closeLoginGate();openPage('termsPage')">Terms & Conditions</span>
   </div>
   <div class="lg-skip" onclick="closeLoginGate()">Browse without account →</div>
+</div>
+
+<!-- ══ PASSWORD RESET MODAL ══ -->
+<!-- Shown when the user clicks the reset link from their email and lands
+     back on this page with ?mode=resetPassword&oobCode=... in the URL.
+     Branded TalentClip UI instead of Firebase's plain default page. -->
+<div id="resetPasswordGate" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.96);backdrop-filter:blur(12px);z-index:9100;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:30px;text-align:center;">
+  <div class="lg-icon">🔐</div>
+  <div class="lg-title">Reset Password</div>
+  <div id="resetPwSubText" class="lg-sub">Checking your reset link...</div>
+
+  <div id="resetPwForm" style="display:none;width:100%;max-width:320px;flex-direction:column;gap:10px;">
+    <div style="position:relative;">
+      <input id="resetPwNew" type="password" placeholder="🔒 New password (min 6 chars)" autocomplete="new-password"
+        style="width:100%;padding:14px 16px;border-radius:14px;border:1.5px solid rgba(255,255,255,.1);background:rgba(255,255,255,.07);color:#fff;font-family:'Outfit',sans-serif;font-size:14px;outline:none;">
+      <span onclick="lgTogglePass('resetPwNew',this)" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:18px;color:var(--muted);">👁</span>
+    </div>
+    <input id="resetPwConfirm" type="password" placeholder="🔒 Confirm new password" autocomplete="new-password"
+      style="width:100%;padding:14px 16px;border-radius:14px;border:1.5px solid rgba(255,255,255,.1);background:rgba(255,255,255,.07);color:#fff;font-family:'Outfit',sans-serif;font-size:14px;outline:none;">
+    <button onclick="submitPasswordReset()" class="lg-btn" style="margin-top:2px;">✅ Set New Password</button>
+  </div>
+
+  <div id="resetPwDone" style="display:none;width:100%;max-width:320px;flex-direction:column;gap:14px;">
+    <div style="font-size:48px;">🎉</div>
+    <div style="font-size:14px;color:var(--muted);">Your password has been reset. You can now sign in with your new password.</div>
+    <button onclick="closeResetPasswordGate()" class="lg-btn">Back to Sign In</button>
+  </div>
+
+  <div id="resetPwError" style="display:none;width:100%;max-width:320px;flex-direction:column;gap:14px;">
+    <div style="font-size:48px;">⚠️</div>
+    <div id="resetPwErrorText" style="font-size:14px;color:var(--muted);">This reset link is invalid or has expired.</div>
+    <button onclick="closeResetPasswordGate();openLoginGate();" class="lg-btn">Request a New Link</button>
+  </div>
 </div>
 
 <!-- HOME -->
@@ -1545,6 +1627,55 @@ body{
         <div onclick="toggleMic()" style="font-size:28px;cursor:pointer;" id="micIcon">🎤</div>
         <div onclick="sendLiveLike(this)" style="text-align:center;cursor:pointer;"><div style="font-size:24px;" id="liveLikeIco">❤️</div><div style="font-size:12px;" id="liveLikeCount">0</div></div>
       </div>
+      <!-- Live effects strip — scrollable filter row like TikTok -->
+      <div style="position:absolute;bottom:82px;left:0;right:0;padding:8px 12px;">
+        <div style="display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding-bottom:4px;">
+          <div class="live-fx on" onclick="applyLiveFilter('none',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#333,#666);display:flex;align-items:center;justify-content:center;font-size:18px;">🚫</div>
+            <div class="live-fx-lbl">None</div>
+          </div>
+          <div class="live-fx" onclick="applyLiveFilter('brightness(1.15) saturate(1.4)',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#ff6b35,#f7c59f);filter:saturate(2);"></div>
+            <div class="live-fx-lbl">Vivid</div>
+          </div>
+          <div class="live-fx" onclick="applyLiveFilter('hue-rotate(30deg) saturate(1.3) brightness(1.05)',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#00c6ff,#0072ff);"></div>
+            <div class="live-fx-lbl">Cool</div>
+          </div>
+          <div class="live-fx" onclick="applyLiveFilter('sepia(0.5) saturate(1.4) brightness(1.05)',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#f7971e,#ffd200);"></div>
+            <div class="live-fx-lbl">Warm</div>
+          </div>
+          <div class="live-fx" onclick="applyLiveFilter('grayscale(1) contrast(1.1)',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#eee,#555);"></div>
+            <div class="live-fx-lbl">B&amp;W</div>
+          </div>
+          <div class="live-fx" onclick="applyLiveFilter('contrast(1.5) brightness(0.82) saturate(0.8)',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#1a1a2e,#16213e);"></div>
+            <div class="live-fx-lbl">Dark</div>
+          </div>
+          <div class="live-fx" onclick="applyLiveFilter('saturate(3) hue-rotate(280deg) brightness(1.1)',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#ff00c8,#7b00ff);"></div>
+            <div class="live-fx-lbl">Neon</div>
+          </div>
+          <div class="live-fx" onclick="applyLiveFilter('sepia(0.8) contrast(0.9) saturate(0.8)',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#d4a574,#8b6914);"></div>
+            <div class="live-fx-lbl">Vintage</div>
+          </div>
+          <div class="live-fx" onclick="applyLiveFilter('brightness(1.3) contrast(0.85) saturate(0.7)',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#fff,#e0e0e0);"></div>
+            <div class="live-fx-lbl">Soft</div>
+          </div>
+          <div class="live-fx" onclick="applyLiveFilter('hue-rotate(180deg) saturate(2) brightness(0.9)',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#00ff87,#60efff);"></div>
+            <div class="live-fx-lbl">Aqua</div>
+          </div>
+          <div class="live-fx" onclick="applyLiveFilter('sepia(1) hue-rotate(280deg) saturate(2)',this)">
+            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#ff9a9e,#fecfef);"></div>
+            <div class="live-fx-lbl">Bloom</div>
+          </div>
+        </div>
+      </div>
       <div style="position:absolute;bottom:30px;left:16px;right:16px;display:flex;gap:8px;">
         <input id="liveCommentInp" style="flex:1;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.2);border-radius:50px;padding:10px 16px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;outline:none;" placeholder="Say something..." maxlength="100" onkeydown="if(event.key==='Enter')sendLiveComment()">
         <button onclick="sendLiveComment()" style="background:var(--primary);border:none;border-radius:50%;width:42px;height:42px;font-size:18px;cursor:pointer;">➤</button>
@@ -1696,7 +1827,7 @@ body{
 </div>
 
 <!-- ═══ CHAT ROOM PAGE ═══ -->
-<div id="chatRoomPage" class="page" style="padding-bottom:0;background:var(--bg);">
+<div id="chatRoomPage" class="page" style="padding-bottom:0;background:var(--bg);position:relative;">
 
   <!-- Header -->
   <div id="chatRoomHeader" style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.07);position:sticky;top:0;background:var(--bg);z-index:10;">
@@ -1713,7 +1844,7 @@ body{
   </div>
 
   <!-- Messages -->
-  <div id="chatMessages" style="overflow-y:auto;height:calc(100vh - 68px - 72px);height:calc(100dvh - 68px - 72px);padding:16px;padding-bottom:90px;display:flex;flex-direction:column;gap:10px;"></div>
+  <div id="chatMessages" style="overflow-y:auto;height:calc(100vh - 68px - 72px);height:calc(100dvh - 68px - 72px);padding:16px;padding-bottom:90px;display:flex;flex-direction:column;gap:10px;position:relative;z-index:1;background:transparent;"></div>
 
   <!-- Media preview — shown before sending -->
   <div id="chatMediaPreview" style="display:none;position:fixed;bottom:64px;left:0;right:0;padding:10px 12px;background:var(--bg);border-top:1px solid rgba(255,255,255,.07);z-index:300;align-items:center;gap:10px;">
@@ -1725,14 +1856,25 @@ body{
     <span onclick="clearChatMedia()" style="color:var(--muted);font-size:22px;cursor:pointer;padding:4px;">✕</span>
   </div>
 
+  <!-- Voice recording overlay — shown while holding the mic button -->
+  <div id="chatVoiceRecOverlay" style="display:none;position:fixed;bottom:0;left:0;right:0;padding:14px 16px;background:linear-gradient(135deg,#1a0030,#0e0e1f);border-top:1px solid rgba(255,77,109,.3);z-index:310;align-items:center;gap:12px;">
+    <div style="width:14px;height:14px;border-radius:50%;background:#ff4d6d;animation:livePulse 1.2s infinite;flex-shrink:0;"></div>
+    <div style="flex:1;">
+      <div style="font-size:13px;font-weight:700;color:#fff;">Recording voice note...</div>
+      <div id="chatVoiceTimer" style="font-size:18px;font-weight:800;color:#ff4d6d;font-variant-numeric:tabular-nums;">0:00</div>
+    </div>
+    <div style="font-size:12px;color:var(--muted);text-align:right;line-height:1.5;">◀ Slide to cancel<br>Release to send</div>
+  </div>
+
   <!-- Input -->
   <div style="position:fixed;bottom:0;left:0;right:0;padding:10px 12px;background:var(--bg);border-top:1px solid rgba(255,255,255,.07);display:flex;gap:8px;align-items:flex-end;z-index:300;">
     <input type="file" id="chatMediaInput" accept="image/*,video/*" hidden onchange="onChatMediaChosen(this)">
     <button onclick="document.getElementById('chatMediaInput').click()" style="width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.08);border:none;color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">📎</button>
     <div style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:22px;padding:10px 16px;min-height:44px;max-height:120px;display:flex;align-items:center;">
-      <textarea id="chatInput" placeholder="Type a message..." rows="1" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage();}" style="background:none;border:none;color:#fff;font-family:'Outfit',sans-serif;font-size:14px;outline:none;resize:none;width:100%;line-height:1.5;max-height:100px;"></textarea>
+      <textarea id="chatInput" placeholder="Type a message..." rows="1" oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px';toggleChatSendMic();" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage();}" style="background:none;border:none;color:#fff;font-family:'Outfit',sans-serif;font-size:14px;outline:none;resize:none;width:100%;line-height:1.5;max-height:100px;"></textarea>
     </div>
     <button id="chatSendBtn" onclick="sendChatMessage()" style="width:44px;height:44px;border-radius:50%;background:var(--chat-out-bg,linear-gradient(135deg,#00c6ff,#7b00ff));border:none;color:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;">➤</button>
+    <button id="chatMicBtn" style="width:44px;height:44px;border-radius:50%;background:var(--chat-out-bg,linear-gradient(135deg,#00c6ff,#7b00ff));border:none;color:#fff;font-size:18px;cursor:pointer;display:none;align-items:center;justify-content:center;flex-shrink:0;touch-action:none;">🎤</button>
   </div>
 </div>
 
@@ -1751,7 +1893,7 @@ body{
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import {
   getFirestore, collection, collectionGroup, addDoc, doc, getDoc, setDoc, updateDoc, deleteDoc,
   query, where, orderBy, getDocs, serverTimestamp, increment, limit, runTransaction,
@@ -1776,9 +1918,8 @@ window.verifiedBadgeSVG = verifiedBadgeSVG;
 function cloudinaryPoster(videoUrl) {
   if (!videoUrl || !videoUrl.includes('cloudinary.com')) return '';
   try {
-    // Replace /video/upload/ with /video/upload/so_0,w_720,h_1280,c_fill,f_jpg/
     return videoUrl
-      .replace('/video/upload/', '/video/upload/so_0,w_720,h_1280,c_fill,f_jpg/')
+      .replace('/video/upload/', '/video/upload/so_0,w_480,h_854,c_fill,f_jpg,q_auto:low/')
       .replace(/\.[^/.]+$/, '.jpg');
   } catch(e) { return ''; }
 }
@@ -1786,10 +1927,17 @@ function cloudinaryPoster(videoUrl) {
 // Apply compression/quality at delivery time via URL transform.
 // (Can't use eager/eager_async at upload time — those require a signed upload,
 // and unsigned uploads reject them outright.)
+// Aggressive mobile-optimized delivery URL — smaller file = faster start, less buffering.
+// Cloudinary applies these transforms at delivery time (no re-upload needed):
+// - w_480: max 480px wide (plenty for a phone screen, half the data of 720p)
+// - q_auto:low: aggressive quality reduction — saves ~60% bandwidth vs q_auto:good
+// - f_auto: let Cloudinary pick best format (webm/mp4) for the browser
+// - br_800k: cap bitrate at 800kbps — enough for smooth 480p, prevents buffering spikes
+// - vc_auto: auto codec selection
 function getOptimizedVideoUrl(videoUrl) {
   if (!videoUrl || !videoUrl.includes('cloudinary.com') || !videoUrl.includes('/video/upload/')) return videoUrl;
-  if (videoUrl.includes('/upload/f_auto') || videoUrl.includes('/upload/q_auto')) return videoUrl; // already transformed
-  return videoUrl.replace('/video/upload/', '/video/upload/f_auto,q_auto:good,w_720,h_1280,c_limit/');
+  if (videoUrl.includes('/upload/w_480') || videoUrl.includes('/upload/f_auto,q_auto')) return videoUrl;
+  return videoUrl.replace('/video/upload/', '/video/upload/w_480,h_854,c_limit,q_auto:low,f_auto,br_800k,vc_auto/');
 }
 
 // ── YouTube Shorts integration ──
@@ -1857,6 +2005,28 @@ try {
 console.log('🔥 Firestore initialized with offline persistence');
 
 let currentUser = null;
+// ── Local cache for current user's Firestore profile ──
+// Prevents 14+ redundant getDoc(users/uid) reads per session
+// (every like, comment, voice note, upload, notification all read it).
+// Invalidated on settings save and profile photo change.
+let _cachedUserProfile = null;
+let _cachedUserProfileUid = null;
+async function getCurrentUserProfile(forceRefresh = false) {
+  if (!currentUser) return {};
+  if (!forceRefresh && _cachedUserProfile && _cachedUserProfileUid === currentUser.uid) {
+    return _cachedUserProfile;
+  }
+  try {
+    const snap = await getDoc(doc(db, 'users', currentUser.uid));
+    _cachedUserProfile = snap.data() || {};
+    _cachedUserProfileUid = currentUser.uid;
+    return _cachedUserProfile;
+  } catch(e) { return {}; }
+}
+function invalidateUserProfileCache() {
+  _cachedUserProfile = null;
+  _cachedUserProfileUid = null;
+}
 // Always read from auth.currentUser as the source of truth
 // This prevents ReferenceError if accessed before onAuthStateChanged fires
 function getCurrentUser() { return auth.currentUser || currentUser; }
@@ -1970,18 +2140,19 @@ function timeAgo(ts) {
 const isNativeApp = !!(window.Capacitor?.isNative || window.capacitor?.isNative);
 
 window.loginUser = async () => {
+  if (isNativeApp) {
+    // Defense in depth — the Google button is hidden on native builds in
+    // openLoginGate(), but if this ever gets triggered anyway, explain
+    // instead of starting a redirect that can't complete.
+    toast('Google sign-in isn\'t available in the app yet — please use email & password 🙏');
+    return;
+  }
   try {
     const provider = new GoogleAuthProvider();
     provider.addScope('email');
     provider.addScope('profile');
-    if (isNativeApp) {
-      // Android WebView can't open OAuth popups — use redirect instead
-      await signInWithRedirect(auth, provider);
-      // Page will reload — getRedirectResult handles it below
-    } else {
-      await signInWithPopup(auth, provider);
-      closeLoginGate(); closeMenu();
-    }
+    await signInWithPopup(auth, provider);
+    closeLoginGate(); closeMenu();
   } catch(e) {
     console.error('Login error:', e);
     toast('Login failed: ' + (e.message || 'Unknown error'));
@@ -2071,13 +2242,99 @@ window.loginWithEmail = async () => {
 window.lgForgotPassword = async () => {
   const email = document.getElementById('lgLoginEmail').value.trim();
   if (!email) { toast('⚠️ Enter your email first'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('⚠️ Enter a valid email address'); return; }
   try {
-    await sendPasswordResetEmail(auth, email);
-    toast('📧 Reset email sent! Check your inbox.');
+    // IMPORTANT: use the real hosted URL, NOT window.location.origin.
+    // In Capacitor, window.location.origin is 'capacitor://localhost' or
+    // 'https://localhost' — both are rejected by Firebase as invalid
+    // continueUrl values, causing the email to either not send or arrive
+    // with no usable reset link. The GitHub Pages URL is always a real
+    // HTTPS origin that Firebase accepts.
+    const hostedUrl = 'https://kasondejeremiah2-code.github.io/Talent-Clip/';
+    const actionCodeSettings = {
+      url: hostedUrl,
+      handleCodeInApp: false
+    };
+    await sendPasswordResetEmail(auth, email, actionCodeSettings);
+    console.log('Password reset email requested for:', email);
+    toast('📧 Reset link sent! Check your inbox AND spam/junk folder — it sometimes lands there.');
   } catch(e) {
-    toast('❌ ' + (e.message || 'Could not send reset email'));
+    console.error('sendPasswordResetEmail error:', e.code, e.message);
+    const msgs = {
+      'auth/invalid-email': '⚠️ That email address looks invalid',
+      'auth/user-not-found': '⚠️ No account found with that email',
+      'auth/too-many-requests': '⚠️ Too many attempts — try again in a few minutes',
+      'auth/network-request-failed': '❌ Network error — check your connection',
+    };
+    toast(msgs[e.code] || '❌ ' + (e.message || 'Could not send reset email'));
   }
 };
+
+// ── Custom password reset landing page ──
+// Firebase's default action page is plain/unbranded and is the most common
+// reason people abandon the reset flow thinking it's broken. This detects
+// the reset link params on load and handles everything in-app instead.
+let _resetOobCode = null;
+
+async function checkForPasswordResetLink() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('mode') !== 'resetPassword') return;
+  const oobCode = params.get('oobCode');
+  if (!oobCode) return;
+
+  _resetOobCode = oobCode;
+  document.getElementById('resetPasswordGate').style.display = 'flex';
+  document.getElementById('loginGate').classList.remove('open');
+
+  try {
+    // Confirms the code is valid and gets back the email it belongs to
+    const email = await verifyPasswordResetCode(auth, oobCode);
+    document.getElementById('resetPwSubText').textContent = `Set a new password for ${email}`;
+    document.getElementById('resetPwForm').style.display = 'flex';
+  } catch(e) {
+    console.error('verifyPasswordResetCode error:', e.code, e.message);
+    const msgs = {
+      'auth/expired-action-code': 'This reset link has expired. Please request a new one.',
+      'auth/invalid-action-code': 'This reset link is invalid or has already been used.',
+      'auth/user-disabled': 'This account has been disabled.',
+      'auth/user-not-found': 'No account found for this reset link.',
+    };
+    document.getElementById('resetPwErrorText').textContent = msgs[e.code] || 'This reset link is invalid or has expired.';
+    document.getElementById('resetPwError').style.display = 'flex';
+  }
+}
+
+window.submitPasswordReset = async () => {
+  const pw1 = document.getElementById('resetPwNew').value;
+  const pw2 = document.getElementById('resetPwConfirm').value;
+  if (pw1.length < 6) { toast('⚠️ Password must be at least 6 characters'); return; }
+  if (pw1 !== pw2) { toast('⚠️ Passwords don\'t match'); return; }
+  if (!_resetOobCode) { toast('❌ Reset link is invalid — please try again'); return; }
+
+  try {
+    await confirmPasswordReset(auth, _resetOobCode, pw1);
+    document.getElementById('resetPwForm').style.display = 'none';
+    document.getElementById('resetPwSubText').style.display = 'none';
+    document.getElementById('resetPwDone').style.display = 'flex';
+  } catch(e) {
+    console.error('confirmPasswordReset error:', e.code, e.message);
+    const msgs = {
+      'auth/expired-action-code': '⚠️ This reset link has expired — please request a new one',
+      'auth/invalid-action-code': '⚠️ This reset link is invalid or already used',
+      'auth/weak-password': '⚠️ Password too weak — use 6+ characters',
+    };
+    toast(msgs[e.code] || '❌ ' + (e.message || 'Could not reset password'));
+  }
+};
+
+window.closeResetPasswordGate = () => {
+  document.getElementById('resetPasswordGate').style.display = 'none';
+  // Clean the reset params out of the URL so refreshing doesn't re-trigger it
+  window.history.replaceState({}, '', window.location.pathname);
+};
+
+// Run on page load — checks if we landed here from a reset-password email link
+checkForPasswordResetLink();
 
 // Handle redirect result when app reloads after Google sign-in on Android
 getRedirectResult(auth).then(result => {
@@ -2097,8 +2354,25 @@ window.requireLogin = (fn) => { if (!currentUser) { openLoginGate(); return; } f
 window.checkAuthGate = () => { if (!currentUser) { openLoginGate(); return false; } return true; };
 Object.defineProperty(window, 'currentUser', { get: () => currentUser, configurable: true });
 window.closeLoginGate = () => document.getElementById('loginGate').classList.remove('open');
-window.openLoginGate = function openLoginGate() { document.getElementById('loginGate').classList.add('open'); }
-function openLoginGate() { document.getElementById('loginGate').classList.add('open'); }
+window.openLoginGate = function openLoginGate() {
+  document.getElementById('loginGate').classList.add('open');
+  // Google sign-in can't complete inside the Capacitor WebView (redirect
+  // has nowhere real to bounce back to), so hide it on native builds and
+  // show a note pointing to email/password instead. Checked fresh each
+  // time the gate opens in case isNativeApp wasn't ready on first paint.
+  const googleBtn = document.getElementById('lgGoogleBtn');
+  const googleDivider = document.getElementById('lgGoogleDivider');
+  const nativeNote = document.getElementById('lgNativeNote');
+  if (isNativeApp) {
+    if (googleBtn) googleBtn.style.display = 'none';
+    if (googleDivider) googleDivider.style.display = 'none';
+    if (nativeNote) nativeNote.style.display = 'block';
+  } else {
+    if (googleBtn) googleBtn.style.display = 'flex';
+    if (googleDivider) googleDivider.style.display = 'flex';
+    if (nativeNote) nativeNote.style.display = 'none';
+  }
+}
 
 onAuthStateChanged(auth, async (user) => {
   currentUser = user;
@@ -2329,6 +2603,7 @@ window.openChatRoom = async (otherUid, name, photo, chatId) => {
   _activeChatId=chatId||getChatId(currentUser.uid,otherUid);
   _activeChatUser={uid:otherUid,name,photo};
   applyChatTheme(_activeChatId);
+  toggleChatSendMic();
   document.getElementById('chatRoomName').textContent=name;
   const av=document.getElementById('chatRoomAvatar');
   av.innerHTML=photo?`<img src="${photo}" style="width:100%;height:100%;object-fit:cover;">`:`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:var(--primary);">${name.charAt(0).toUpperCase()}</div>`;
@@ -2354,6 +2629,22 @@ window.openChatRoom = async (otherUid, name, photo, chatId) => {
         let bodyHTML;
         if (m.deleted) {
           bodyHTML = '<i style="opacity:.6;">Message deleted</i>';
+        } else if (m.mediaType === 'audio' && m.mediaUrl) {
+          // Voice note bubble — custom play/pause button + duration, since
+          // a bare <audio controls> looks out of place next to chat bubbles.
+          const dur = m.audioDuration || 0;
+          const durLabel = `${Math.floor(dur/60)}:${String(dur%60).padStart(2,'0')}`;
+          const playerId = 'voice-' + msgId;
+          bodyHTML = `
+            <div style="display:flex;align-items:center;gap:10px;min-width:180px;padding:2px 4px;">
+              <div onclick="toggleVoiceNote('${playerId}','${m.mediaUrl}')" id="${playerId}-btn" style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;font-size:14px;">▶</div>
+              <div style="flex:1;">
+                <div style="height:3px;background:rgba(255,255,255,.25);border-radius:2px;overflow:hidden;">
+                  <div id="${playerId}-bar" style="height:100%;width:0%;background:#fff;border-radius:2px;"></div>
+                </div>
+              </div>
+              <div id="${playerId}-time" style="font-size:11px;opacity:.8;flex-shrink:0;">${durLabel}</div>
+            </div>`;
         } else if (m.mediaUrl) {
           // WhatsApp-style media bubble: shows the image/video if it loads,
           // falls back to "unavailable" if the file is gone (deleted from
@@ -2367,7 +2658,7 @@ window.openChatRoom = async (otherUid, name, photo, chatId) => {
           bodyHTML = m.text || '';
         }
 
-        row.innerHTML=`<div class="msg-bubble ${isMe?'msg-out':'msg-in'}" ${m.mediaUrl?'style="padding:6px;"':''}>${bodyHTML}<div class="msg-time" ${m.mediaUrl?'style="padding:4px 6px 0;"':''}>${m.createdAt?timeAgo(m.createdAt):'now'}</div></div>`;
+        row.innerHTML=`<div class="msg-bubble ${isMe?'msg-out':'msg-in'}" ${(m.mediaUrl&&m.mediaType!=='audio')?'style="padding:6px;"':''}>${bodyHTML}<div class="msg-time" ${(m.mediaUrl&&m.mediaType!=='audio')?'style="padding:4px 6px 0;"':''}>${m.createdAt?timeAgo(m.createdAt):'now'}</div></div>`;
         msgs.appendChild(row);
         // Long-press (not just click) to open delete menu — mirrors the
         // double-tap-to-report pattern used elsewhere in the app, but uses
@@ -2416,13 +2707,150 @@ window.onChatMediaChosen = (input) => {
     label.textContent = '📷 Photo ready to send';
   }
   preview.style.display = 'flex';
+  toggleChatSendMic();
 };
 
 window.clearChatMedia = () => {
   _chatMediaFile = null;
   document.getElementById('chatMediaInput').value = '';
   document.getElementById('chatMediaPreview').style.display = 'none';
+  toggleChatSendMic();
 };
+
+// ── Mic/Send button toggle (WhatsApp pattern: mic shows when input is
+// empty and no media attached, send button shows otherwise) ──
+window.toggleChatSendMic = () => {
+  const hasText = document.getElementById('chatInput').value.trim().length > 0;
+  const hasMedia = !!_chatMediaFile;
+  const showSend = hasText || hasMedia;
+  document.getElementById('chatSendBtn').style.display = showSend ? 'flex' : 'none';
+  document.getElementById('chatMicBtn').style.display = showSend ? 'none' : 'flex';
+};
+
+// ── Voice note recording ──
+let _voiceRecorder = null;
+let _voiceChunks = [];
+let _voiceStream = null;
+let _voiceStartTime = 0;
+let _voiceTimerInterval = null;
+let _voiceCancelled = false;
+let _voiceTouchStartX = 0;
+
+async function startVoiceRecording() {
+  if (!currentUser) { openLoginGate(); return; }
+  if (typeof MediaRecorder === 'undefined') {
+    toast('❌ Voice notes not supported on this device');
+    return;
+  }
+  _voiceCancelled = false;
+  try {
+    _voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch(e) {
+    console.error('startVoiceRecording error:', e);
+    if (e.name === 'NotAllowedError') toast('📵 Microphone permission denied — check Android app permissions');
+    else toast('❌ Could not access microphone');
+    return;
+  }
+  _voiceChunks = [];
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+  _voiceRecorder = new MediaRecorder(_voiceStream, { mimeType });
+  _voiceRecorder.ondataavailable = e => { if (e.data.size > 0) _voiceChunks.push(e.data); };
+  _voiceRecorder.onstop = () => {
+    const durationSecs = Math.round((Date.now() - _voiceStartTime) / 1000);
+    const blob = new Blob(_voiceChunks, { type: mimeType });
+    _voiceChunks = [];
+    sendVoiceNote(blob, durationSecs);
+  };
+  _voiceRecorder.start();
+  _voiceStartTime = Date.now();
+
+  document.getElementById('chatVoiceRecOverlay').style.display = 'flex';
+  const timerEl = document.getElementById('chatVoiceTimer');
+  _voiceTimerInterval = setInterval(() => {
+    const secs = Math.floor((Date.now() - _voiceStartTime) / 1000);
+    const m = Math.floor(secs / 60), s = secs % 60;
+    timerEl.textContent = `${m}:${String(s).padStart(2,'0')}`;
+    // Auto-stop at 3 minutes — keeps uploads small and fast
+    if (secs >= 180) stopVoiceRecording(false);
+  }, 200);
+}
+
+function stopVoiceRecording(cancelled) {
+  _voiceCancelled = cancelled;
+  clearInterval(_voiceTimerInterval);
+  document.getElementById('chatVoiceRecOverlay').style.display = 'none';
+  if (_voiceStream) { _voiceStream.getTracks().forEach(t => t.stop()); _voiceStream = null; }
+  if (_voiceRecorder && _voiceRecorder.state !== 'inactive') {
+    _voiceRecorder.stop();
+  }
+}
+
+// Mic button — press and hold to record, release to send, slide left to cancel
+(function setupVoiceMicButton() {
+  // Button is created in HTML; attach listeners once DOM is ready
+  document.addEventListener('DOMContentLoaded', () => {
+    const micBtn = document.getElementById('chatMicBtn');
+    if (!micBtn) return;
+
+    const onStart = (clientX) => {
+      _voiceTouchStartX = clientX;
+      startVoiceRecording();
+    };
+    const onMove = (clientX) => {
+      if (!_voiceRecorder || _voiceRecorder.state !== 'recording') return;
+      const dx = clientX - _voiceTouchStartX;
+      const overlay = document.getElementById('chatVoiceRecOverlay');
+      if (dx < -80) {
+        overlay.style.background = 'linear-gradient(135deg,#3a0010,#0e0e1f)';
+      } else {
+        overlay.style.background = 'linear-gradient(135deg,#1a0030,#0e0e1f)';
+      }
+      if (dx < -120) { stopVoiceRecording(true); }
+    };
+    const onEnd = () => {
+      if (_voiceRecorder && _voiceRecorder.state === 'recording') stopVoiceRecording(false);
+    };
+
+    micBtn.addEventListener('touchstart', e => { e.preventDefault(); onStart(e.touches[0].clientX); }, { passive: false });
+    micBtn.addEventListener('touchmove', e => onMove(e.touches[0].clientX));
+    micBtn.addEventListener('touchend', onEnd);
+    micBtn.addEventListener('mousedown', e => onStart(e.clientX));
+    document.addEventListener('mousemove', e => { if (_voiceRecorder?.state === 'recording') onMove(e.clientX); });
+    document.addEventListener('mouseup', () => { if (_voiceRecorder?.state === 'recording') onEnd(); });
+  });
+})();
+
+// sendVoiceNote is called automatically when recording stops via
+// _voiceRecorder.onstop, attached inside startVoiceRecording above.
+async function sendVoiceNote(blob, durationSecs) {
+  if (!currentUser || !_activeChatId || _voiceCancelled) {
+    if (_voiceCancelled) toast('🎤 Recording cancelled');
+    return;
+  }
+  if (durationSecs < 1) { toast('🎤 Hold to record a voice note'); return; }
+
+  const chatRef = doc(db,'chats',_activeChatId);
+  const otherUid = _activeChatUser?.uid;
+
+  try {
+    toast('⏳ Sending voice note...');
+    const file = new File([blob], `voice-${Date.now()}.webm`, { type: blob.type });
+    const mediaUrl = await uploadToCloudinary(file);
+
+    const msgData = {
+      uid: currentUser.uid, text: '', createdAt: serverTimestamp(),
+      mediaUrl, mediaType: 'audio', audioDuration: durationSecs
+    };
+    const msgRef = await addDoc(collection(db,'chats',_activeChatId,'messages'), msgData);
+
+    const previewText = '🎤 Voice message';
+    await updateDoc(chatRef,{lastMsg:previewText,lastMsgId:msgRef.id,lastAt:serverTimestamp(),[`unread.${otherUid}`]:increment(1)});
+    if(otherUid) sendNotification(otherUid,{type:'message',fromUid:currentUser.uid,fromName:currentUser.displayName||'Someone',fromPhoto:currentUser.photoURL||'',title:`💬 ${currentUser.displayName||'Someone'} sent you a message`,body:previewText});
+  } catch(e) {
+    console.error('sendVoiceNote error:', e);
+    toast('❌ Could not send voice note: ' + (e.code || e.message || 'Unknown error'));
+  }
+}
 
 window.sendChatMessage = async () => {
   if(!currentUser||!_activeChatId)return;
@@ -2465,12 +2893,74 @@ window.sendChatMessage = async () => {
   }
 };
 
+// ── Voice note playback ──
+// Only one voice note plays at a time — starting another pauses the current one.
+let _activeVoicePlayer = null;
+let _activeVoiceId = null;
+
+window.toggleVoiceNote = (playerId, url) => {
+  const btn = document.getElementById(playerId + '-btn');
+  const bar = document.getElementById(playerId + '-bar');
+  const timeEl = document.getElementById(playerId + '-time');
+  if (!btn) return;
+
+  // If this player is already active and playing, pause it
+  if (_activeVoiceId === playerId && _activeVoicePlayer && !_activeVoicePlayer.paused) {
+    _activeVoicePlayer.pause();
+    btn.textContent = '▶';
+    return;
+  }
+  // If this player is active but paused, resume
+  if (_activeVoiceId === playerId && _activeVoicePlayer) {
+    _activeVoicePlayer.play().catch(()=>{});
+    btn.textContent = '⏸';
+    return;
+  }
+
+  // Switching to a different voice note — stop whichever was playing
+  if (_activeVoicePlayer) {
+    _activeVoicePlayer.pause();
+    const prevBtn = document.getElementById(_activeVoiceId + '-btn');
+    if (prevBtn) prevBtn.textContent = '▶';
+  }
+
+  const audio = new Audio(url);
+  _activeVoicePlayer = audio;
+  _activeVoiceId = playerId;
+  btn.textContent = '⏳';
+
+  audio.addEventListener('loadedmetadata', () => {
+    btn.textContent = '⏸';
+    audio.play().catch(()=>{});
+  });
+  audio.addEventListener('timeupdate', () => {
+    if (!audio.duration) return;
+    const pct = (audio.currentTime / audio.duration) * 100;
+    if (bar) bar.style.width = pct + '%';
+    if (timeEl) {
+      const remaining = Math.max(0, Math.round(audio.duration - audio.currentTime));
+      timeEl.textContent = `${Math.floor(remaining/60)}:${String(remaining%60).padStart(2,'0')}`;
+    }
+  });
+  audio.addEventListener('ended', () => {
+    btn.textContent = '▶';
+    if (bar) bar.style.width = '0%';
+    _activeVoicePlayer = null;
+    _activeVoiceId = null;
+  });
+  audio.addEventListener('error', () => {
+    // Same "unavailable" pattern as photo/video — file gone or no internet
+    const wrap = btn.closest('div').parentElement;
+    if (wrap) wrap.innerHTML = chatMediaUnavailableHTML('audio');
+  });
+};
+
 // ── Media unavailable fallback (WhatsApp-style) ──
 // Shown when a chat photo/video fails to load — file deleted, no internet,
 // or the link expired. Matches the "Unavailable" / "Not found in internal
 // storage" pattern instead of a broken-image icon.
 window.chatMediaUnavailableHTML = (kind) => {
-  const icon = kind === 'video' ? '🎬' : '🖼️';
+  const icon = kind === 'video' ? '🎬' : kind === 'audio' ? '🎤' : '🖼️';
   return `<div style="width:100%;max-width:240px;background:rgba(255,255,255,.05);border:1px dashed rgba(255,255,255,.15);border-radius:14px;padding:24px 16px;text-align:center;color:var(--muted);">
     <div style="font-size:32px;margin-bottom:8px;opacity:.5;">${icon}</div>
     <div style="font-size:13px;font-weight:700;">Unavailable</div>
@@ -2675,14 +3165,38 @@ const CHAT_THEMES = [
 
 function getChatTheme(chatId) {
   try {
+    const saved = JSON.parse(localStorage.getItem('tc_chat_theme2_' + chatId) || 'null');
+    if (saved) return saved;
+    // Legacy plain-id migration
     const id = localStorage.getItem('tc_chat_theme_' + chatId);
     return CHAT_THEMES.find(t => t.id === id) || CHAT_THEMES[0];
   } catch(e) { return CHAT_THEMES[0]; }
 }
 
+function saveChatTheme(chatId, themeObj) {
+  try { localStorage.setItem('tc_chat_theme2_' + chatId, JSON.stringify(themeObj)); } catch(e) {}
+}
+
 function applyChatTheme(chatId) {
   const theme = getChatTheme(chatId);
-  document.documentElement.style.setProperty('--chat-out-bg', theme.out);
+  document.documentElement.style.setProperty('--chat-out-bg', theme.out || 'linear-gradient(135deg,#00c6ff,#7b00ff)');
+
+  // Remove any existing custom background
+  const existing = document.getElementById('chatRoomBg');
+  if (existing) existing.remove();
+
+  // Apply custom photo background if set
+  if (theme.bgImage) {
+    const bg = document.createElement('div');
+    bg.id = 'chatRoomBg';
+    bg.style.cssText = `
+      position:fixed;inset:0;z-index:0;pointer-events:none;
+      background:url('${theme.bgImage}') center/cover no-repeat;
+      opacity:${theme.bgBrightness ?? 0.35};
+    `;
+    const chatPage = document.getElementById('chatRoomPage');
+    if (chatPage) chatPage.insertBefore(bg, chatPage.firstChild);
+  }
 }
 
 window.openChatThemeSheet = () => {
@@ -2691,32 +3205,166 @@ window.openChatThemeSheet = () => {
   const current = getChatTheme(_activeChatId);
   const sheet = document.createElement('div');
   sheet.id = 'chatThemeSheet';
-  sheet.style.cssText = 'position:fixed;inset:0;z-index:700;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;';
+  sheet.style.cssText = 'position:fixed;inset:0;z-index:700;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;';
   sheet.onclick = (e) => { if (e.target === sheet) sheet.remove(); };
   sheet.innerHTML = `
     <div style="width:100%;background:#0e0e1f;border-radius:20px 20px 0 0;padding:8px 0 max(20px,env(safe-area-inset-bottom));animation:slideUp .25s ease;">
       <div style="width:40px;height:4px;background:rgba(255,255,255,.2);border-radius:4px;margin:8px auto 16px;"></div>
-      <div style="padding:0 20px 16px;font-weight:800;font-size:16px;">🎨 Chat Theme</div>
-      <div style="padding:0 20px;display:grid;grid-template-columns:repeat(4,1fr);gap:14px;max-height:280px;overflow-y:auto;">
+      <div style="padding:0 20px 14px;font-weight:800;font-size:16px;">🎨 Chat Theme</div>
+
+      <!-- Colour themes grid -->
+      <div style="padding:0 20px;display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
         ${CHAT_THEMES.map(t => `
           <div onclick="setChatTheme('${t.id}')" style="display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;">
-            <div style="width:52px;height:52px;border-radius:50%;background:${t.out};border:3px solid ${t.id===current.id?'#fff':'transparent'};box-shadow:${t.id===current.id?'0 0 0 2px rgba(0,198,255,.5)':'none'};display:flex;align-items:center;justify-content:center;">
-              ${t.id===current.id?'<span style="font-size:18px;">✓</span>':''}
+            <div style="width:52px;height:52px;border-radius:50%;background:${t.out};border:3px solid ${current.id===t.id&&!current.bgImage?'#fff':'transparent'};box-shadow:${current.id===t.id&&!current.bgImage?'0 0 0 2px rgba(0,198,255,.5)':'none'};display:flex;align-items:center;justify-content:center;">
+              ${current.id===t.id&&!current.bgImage?'<span style="font-size:18px;">✓</span>':''}
             </div>
             <span style="font-size:11px;color:var(--muted);">${t.name}</span>
           </div>`).join('')}
+
+        <!-- Custom photo option -->
+        <div onclick="pickChatBgPhoto()" style="display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;">
+          <div style="width:52px;height:52px;border-radius:50%;border:3px solid ${current.bgImage?'#fff':'rgba(255,255,255,.2)'};box-shadow:${current.bgImage?'0 0 0 2px rgba(0,198,255,.5)':'none'};overflow:hidden;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);">
+            ${current.bgImage
+              ? `<img src="${current.bgImage}" style="width:100%;height:100%;object-fit:cover;">`
+              : `<span style="font-size:22px;">🖼️</span>`}
+          </div>
+          <span style="font-size:11px;color:var(--muted);">Custom</span>
+        </div>
       </div>
-      <div style="padding:16px 20px 0;font-size:12px;color:var(--muted);">This only changes how the chat looks for you.</div>
+
+      <!-- Brightness slider — only shown when a custom photo is set -->
+      ${current.bgImage ? `
+      <div id="chatBgBrightnessWrap" style="padding:20px 20px 0;">
+        <div style="font-size:13px;font-weight:700;margin-bottom:10px;">☀️ Background brightness</div>
+        <input type="range" id="chatBgBrightnessSlider"
+          min="5" max="80" value="${Math.round((current.bgBrightness ?? 0.35) * 100)}"
+          oninput="previewChatBgBrightness(this.value)"
+          style="width:100%;accent-color:var(--primary);">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px;">
+          <span>Darker</span><span>Brighter</span>
+        </div>
+        <button onclick="saveChatBgBrightness()" style="width:100%;margin-top:12px;padding:12px;background:linear-gradient(135deg,#00c6ff,#7b00ff);border:none;border-radius:14px;color:#fff;font-weight:700;font-size:14px;font-family:'Outfit',sans-serif;cursor:pointer;">Save</button>
+        <button onclick="removeChatBgPhoto()" style="width:100%;margin-top:8px;padding:12px;background:rgba(255,77,109,.15);border:1px solid rgba(255,77,109,.3);border-radius:14px;color:#ff4d6d;font-weight:700;font-size:14px;font-family:'Outfit',sans-serif;cursor:pointer;">🗑️ Remove photo</button>
+      </div>` : ''}
+
+      <input type="file" id="chatBgPhotoInput" accept="image/*" hidden onchange="onChatBgPhotoChosen(this)">
+      <div style="padding:14px 20px 0;font-size:12px;color:var(--muted);">Only visible to you.</div>
     </div>`;
   document.body.appendChild(sheet);
 };
 
 window.setChatTheme = (themeId) => {
   if (!_activeChatId) return;
-  try { localStorage.setItem('tc_chat_theme_' + _activeChatId, themeId); } catch(e) {}
+  const t = CHAT_THEMES.find(x => x.id === themeId) || CHAT_THEMES[0];
+  saveChatTheme(_activeChatId, { id: t.id, out: t.out });
   applyChatTheme(_activeChatId);
   document.getElementById('chatThemeSheet')?.remove();
   toast('🎨 Theme updated');
+};
+
+window.pickChatBgPhoto = () => {
+  document.getElementById('chatBgPhotoInput')?.click();
+};
+
+window.onChatBgPhotoChosen = (input) => {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) { toast('❌ Photo too large — max 10MB'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const dataUrl = e.target.result;
+    openChatBgEditor(dataUrl);
+  };
+  reader.readAsDataURL(file);
+};
+
+// Full-screen brightness editor — just like WhatsApp's chat wallpaper editor
+window.openChatBgEditor = (dataUrl) => {
+  document.getElementById('chatThemeSheet')?.remove();
+  document.getElementById('chatBgEditor')?.remove();
+
+  const editor = document.createElement('div');
+  editor.id = 'chatBgEditor';
+  editor.style.cssText = 'position:fixed;inset:0;z-index:800;background:#000;display:flex;flex-direction:column;';
+  editor.innerHTML = `
+    <!-- Header -->
+    <div style="padding:16px;display:flex;align-items:center;gap:12px;background:rgba(0,0,0,.8);position:relative;z-index:2;">
+      <span onclick="document.getElementById('chatBgEditor').remove();openChatThemeSheet();" style="font-size:24px;cursor:pointer;color:#fff;">←</span>
+      <span style="font-size:16px;font-weight:800;flex:1;">Chat Wallpaper</span>
+      <button onclick="saveChatBgPhoto('${_activeChatId}')" style="background:linear-gradient(135deg,#00c6ff,#7b00ff);border:none;border-radius:20px;padding:8px 20px;color:#fff;font-weight:700;font-size:13px;font-family:'Outfit',sans-serif;cursor:pointer;">Apply ✓</button>
+    </div>
+
+    <!-- Preview area — full screen with the actual chat bubbles overlaid -->
+    <div style="flex:1;position:relative;overflow:hidden;">
+      <img id="chatBgEditorImg" src="${dataUrl}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;">
+      <div id="chatBgEditorDim" style="position:absolute;inset:0;background:rgba(0,0,0,.65);"></div>
+      <!-- Sample bubbles so you can see how it looks -->
+      <div style="position:absolute;inset:0;padding:20px;display:flex;flex-direction:column;justify-content:flex-end;gap:10px;pointer-events:none;">
+        <div style="align-self:flex-start;max-width:70%;background:rgba(255,255,255,.12);backdrop-filter:blur(4px);padding:10px 14px;border-radius:18px 18px 18px 4px;font-size:13px;color:#fff;">Hey! 👋</div>
+        <div style="align-self:flex-end;max-width:70%;background:var(--chat-out-bg,linear-gradient(135deg,#00c6ff,#7b00ff));padding:10px 14px;border-radius:18px 18px 4px 18px;font-size:13px;color:#fff;">Looking good! 🔥</div>
+        <div style="align-self:flex-start;max-width:70%;background:rgba(255,255,255,.12);backdrop-filter:blur(4px);padding:10px 14px;border-radius:18px 18px 18px 4px;font-size:13px;color:#fff;">Love this wallpaper 😍</div>
+      </div>
+    </div>
+
+    <!-- Brightness slider at bottom -->
+    <div style="padding:20px;background:rgba(0,0,0,.8);">
+      <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+        <span>🌑</span>
+        <input type="range" id="chatBgEditorSlider" min="0" max="85" value="65"
+          oninput="document.getElementById('chatBgEditorDim').style.background='rgba(0,0,0,'+(this.value/100)+')';"
+          style="flex:1;accent-color:var(--primary);">
+        <span>☀️</span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);text-align:center;">Drag to adjust brightness</div>
+    </div>`;
+  document.body.appendChild(editor);
+
+  // Store the chosen image temporarily
+  editor._dataUrl = dataUrl;
+};
+
+window.saveChatBgPhoto = (chatId) => {
+  const editor = document.getElementById('chatBgEditor');
+  if (!editor) return;
+  const slider = document.getElementById('chatBgEditorSlider');
+  const brightness = 1 - (parseInt(slider.value) / 100); // 0 = black, 1 = full brightness
+  const dataUrl = editor._dataUrl;
+
+  const current = getChatTheme(chatId);
+  saveChatTheme(chatId, {
+    ...current,
+    id: 'custom',
+    bgImage: dataUrl,
+    bgBrightness: brightness
+  });
+  applyChatTheme(chatId);
+  editor.remove();
+  toast('🖼️ Wallpaper set!');
+};
+
+window.previewChatBgBrightness = (val) => {
+  const bg = document.getElementById('chatRoomBg');
+  if (bg) bg.style.opacity = val / 100;
+};
+
+window.saveChatBgBrightness = () => {
+  const slider = document.getElementById('chatBgBrightnessSlider');
+  const brightness = parseInt(slider.value) / 100;
+  const current = getChatTheme(_activeChatId);
+  saveChatTheme(_activeChatId, { ...current, bgBrightness: brightness });
+  applyChatTheme(_activeChatId);
+  document.getElementById('chatThemeSheet')?.remove();
+  toast('✅ Brightness saved');
+};
+
+window.removeChatBgPhoto = () => {
+  const current = getChatTheme(_activeChatId);
+  const { bgImage, bgBrightness, ...rest } = current;
+  saveChatTheme(_activeChatId, { ...rest, id: rest.id === 'custom' ? 'default' : rest.id });
+  applyChatTheme(_activeChatId);
+  document.getElementById('chatThemeSheet')?.remove();
+  toast('🗑️ Wallpaper removed');
 };
 
 window.viewChatUserProfile=()=>{
@@ -2755,7 +3403,7 @@ function loadChatBadge(){
 // ─── Settings Page ───────────────────────────────────────────
 window.loadSettings = async () => {
   if (!currentUser) { openLoginGate(); return; }
-  const snap = await getDoc(doc(db,'users',currentUser.uid));
+  const snap = await getCurrentUserProfile();
   const d = snap.data() || {};
 
   // Populate fields
@@ -2800,8 +3448,7 @@ window.saveSettings = async () => {
   if (btn) { btn.textContent = 'Saving...'; btn.disabled = true; }
 
   try {
-    const snap = await getDoc(doc(db,'users',currentUser.uid));
-    const d = snap.data() || {};
+    const d = await getCurrentUserProfile();
 
     const newName = document.getElementById('settingsUname')?.value.trim();
     const newBio  = document.getElementById('settingsBio')?.value.trim();
@@ -2849,6 +3496,7 @@ window.saveSettings = async () => {
     }
 
     toast('✅ Profile saved!');
+    invalidateUserProfileCache();
   } catch(e) {
     toast('❌ Error: ' + e.message);
   } finally {
@@ -2872,6 +3520,7 @@ window.changeProfPic = async () => {
     const sAv = document.getElementById('settingsAv');
     if (sAv) sAv.src = url;
     toast('Profile photo updated ✅');
+    invalidateUserProfileCache();
   } catch(e) {
     console.error('changeProfPic error:', e);
     if (e.code === 'permission-denied') toast('❌ Firestore permission denied — update your security rules');
@@ -3065,7 +3714,7 @@ async function loadTikTokFeedForUser(uid) {
       const isFollowing2 = followingSet.has(p.uid);
       const isVerified2 = p.authorVerified === true || isUidVerifiedSync(p.uid);
       slide.innerHTML = `
-        <video src="${p.mediaUrl}" loop playsinline muted preload="auto"></video>
+        <video src="${getOptimizedVideoUrl(p.mediaUrl)}" loop playsinline muted preload="metadata"></video>
         <div class="sound-toggle" onclick="toggleFeedSound(this)">🔊</div>
         <div class="vid-spinner"><svg viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="4" stroke-dasharray="80 40" stroke-linecap="round"/></svg></div>
         <div class="pause-overlay"><div class="pause-ico">⏸</div></div>
@@ -3276,7 +3925,7 @@ function openVideoFeedPage(posts, title, backPage) {
     const avSrc = p.authorPhoto || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.authorName||'U')}&background=0e0e1f&color=00c6ff`;
     const catBadge = p.category ? `<div style="position:absolute;top:70px;left:14px;background:rgba(0,0,0,.55);padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;color:#fff;">🎬 ${p.category}</div>` : '';
     slide.innerHTML = `
-      <video src="${p.mediaUrl}" loop playsinline muted preload="auto"></video>
+      <video src="${getOptimizedVideoUrl(p.mediaUrl)}" loop playsinline muted preload="metadata"></video>
       <div class="sound-toggle" onclick="toggleFeedSound(this)">🔊</div>
       <div class="vid-spinner"><svg viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="4" stroke-dasharray="80 40" stroke-linecap="round"/></svg></div>
       <div class="pause-overlay"><div class="pause-ico">⏸</div></div>
@@ -3447,7 +4096,7 @@ async function loadCategoryFeed(cat) {
         attachDoubleTap(img, post.mediaUrl, ()=>openPhotoModal(post));
       } else if(post.type==='video' && post.mediaUrl){
         slide.innerHTML = `
-          <video data-src="${post.mediaUrl}" poster="${cloudinaryPoster(post.mediaUrl)}" loop playsinline muted preload="none"></video>
+          <video src="${getOptimizedVideoUrl(post.mediaUrl)}" poster="${cloudinaryPoster(post.mediaUrl)}" loop playsinline muted preload="metadata"></video>
           <div class="sound-toggle" onclick="toggleFeedSound(this)">🔊</div>
           <div class="vid-spinner"><svg viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="4" stroke-dasharray="80 40" stroke-linecap="round"/></svg></div>
           <div class="pause-overlay"><div class="pause-ico">⏸</div></div>
@@ -3595,22 +4244,35 @@ function getYtCacheKey(cat) {
 // Fetch 20 YT shorts for a category, supports pagination for "load more"
 async function fetchYTPage(cat, pageToken = null) {
   const queries = YT_CATEGORY_QUERIES[cat] || YT_CATEGORY_QUERIES[''];
-  // First load = random query. Subsequent loads = rotate through rest
-  const qIndex = pageToken
+
+  // Pick query — rotate through all of them, never repeat until all seen
+  // Use a session-level pointer per category so refreshing always gives
+  // a different topic, not the same cluster from YouTube's relevance ranking.
+  const sessionKey = 'tc_yt_qi_' + (cat || 'home');
+  let qIndex = pageToken
     ? (parseInt(pageToken.split('_')[0]) || 0)
-    : Math.floor(Math.random() * queries.length);
+    : (() => {
+        const i = (parseInt(sessionStorage.getItem(sessionKey) || '-1') + 1) % queries.length;
+        sessionStorage.setItem(sessionKey, String(i));
+        return i;
+      })();
   const q = queries[qIndex % queries.length];
   const nextQIndex = (qIndex + 1) % queries.length;
 
-  // Heavily weight Africa + global south so content is genuinely worldwide
+  // Mix regions — always include Africa-first countries for diversity
   const GLOBAL_REGIONS = ['ZA','NG','KE','GH','TZ','UG','RW','CM','SN','ET','US','GB','BR','IN','PH','ID','MX','FR','DE','KR','AU','CA','EG','MA','CI'];
   const regionCode = GLOBAL_REGIONS[Math.floor(Math.random() * GLOBAL_REGIONS.length)];
+
+  // Use 'date' order (newest first) rather than 'relevance' — relevance clusters
+  // results around popular channels (MrBeast effect). 'date' gives genuinely
+  // diverse creators since it's purely chronological.
+  const useDate = cat === '' || Math.random() > 0.5;
 
   try {
     const params = new URLSearchParams({
       part: 'snippet', q, type: 'video',
-      videoDuration: 'short', maxResults: '50',
-      order: 'relevance',
+      videoDuration: 'short', maxResults: '30',
+      order: useDate ? 'date' : 'relevance',
       safeSearch: 'moderate',
       regionCode,
       key: YT_API_KEY,
@@ -3623,48 +4285,24 @@ async function fetchYTPage(cat, pageToken = null) {
     const items = (data.items || []).filter(i => i.id?.videoId);
     if (!items.length) return { items: [], nextPageToken: null };
 
-    // Fetch stats for these videos
-    const statsParams = new URLSearchParams({
-      part: 'statistics', id: items.map(i => i.id.videoId).join(','), key: YT_API_KEY
-    });
-    let statsMap = {};
-    try {
-      const sr = await fetch('https://www.googleapis.com/youtube/v3/videos?' + statsParams);
-      const sd = await sr.json();
-      (sd.items || []).forEach(v => { statsMap[v.id] = v.statistics; });
-    } catch(e) {}
-
-    // Fetch real channel thumbnails via channels API
-    const channelIds = [...new Set(items.map(i => i.snippet.channelId).filter(Boolean))];
-    let channelThumbMap = {};
-    try {
-      const chParams = new URLSearchParams({ part: 'snippet', id: channelIds.join(','), key: YT_API_KEY });
-      const chRes = await fetch('https://www.googleapis.com/youtube/v3/channels?' + chParams);
-      const chData = await chRes.json();
-      (chData.items || []).forEach(ch => {
-        channelThumbMap[ch.id] = ch.snippet?.thumbnails?.default?.url || '';
-      });
-    } catch(e) { console.warn('Channel thumb fetch failed:', e); }
-
+    // ── No secondary API calls ──
+    // Stats (likes/views) and channel thumbnails cost extra quota units.
+    // The snippet already has title, thumbnail, channel name — that's enough
+    // to build a good feed. Removing these saves ~65% of YouTube API quota.
     const shorts = items.map(item => {
       const vid = item.id.videoId;
-      const s = statsMap[vid] || {};
-      const channelId = item.snippet.channelId;
       return {
         _isYouTube: true, id: 'yt_' + vid, videoId: vid,
         category: cat,
         authorName: item.snippet.channelTitle || 'YouTube Creator',
-        channelId,
-        channelThumb: channelThumbMap[channelId] || '',
+        channelId: item.snippet.channelId,
+        channelThumb: item.snippet.thumbnails?.default?.url || '',
         title: item.snippet.title || '',
-        thumbnail: item.snippet.thumbnails?.high?.url || '',
-        likeCount: parseInt(s.likeCount || 0),
-        viewCount: parseInt(s.viewCount || 0),
-        commentCount: parseInt(s.commentCount || 0),
+        thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || '',
+        likeCount: 0, viewCount: 0, commentCount: 0,
       };
     });
 
-    // Next page token encodes query index + actual token
     const nextToken = data.nextPageToken
       ? `${nextQIndex}|${data.nextPageToken}`
       : `${nextQIndex}|`;
@@ -3804,6 +4442,9 @@ window.ytOpenComments = (videoId, title) => {
   overlay.style.display = 'block';
   drawer.classList.add('open');
   cancelReply();
+  const _cmInp = document.getElementById('commentInput');
+  if (_cmInp) _cmInp.value = '';
+  setTimeout(initCmMicButton, 100);
   if (_commentsUnsub) _commentsUnsub();
   // ytComments requires auth — skip silently if not signed in
   if (!currentUser) {
@@ -4026,7 +4667,7 @@ async function loadTikTokFeed(cat) {
       const isBoosted = p._boosted || p.boosted || false;
       const avSrc = p.authorPhoto || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.authorName||'U')}&background=0e0e1f&color=00c6ff`;
       slide.innerHTML = `
-        <video data-src="${p.mediaUrl}" poster="${cloudinaryPoster(p.mediaUrl)}" loop playsinline muted preload="none"></video>
+        <video src="${getOptimizedVideoUrl(p.mediaUrl)}" poster="${cloudinaryPoster(p.mediaUrl)}" loop playsinline muted preload="metadata"></video>
         <div class="sound-toggle" onclick="toggleFeedSound(this)">🔊</div>
         <div class="vid-spinner"><svg viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="4" stroke-dasharray="80 40" stroke-linecap="round"/></svg></div>
         <div class="pause-overlay"><div class="pause-ico">⏸</div></div>
@@ -4118,22 +4759,12 @@ async function loadTikTokFeed(cat) {
 }
 
 function setupFeedObserver(wrap) {
-  // Eagerly preload first 2 video slides so first video plays instantly
-  wrap.querySelectorAll('video').forEach((v, i) => {
-    if (i < 2 && v.dataset.src) {
-      v.src = v.dataset.src;
-      v.preload = 'auto';
-      v.load();
-    }
-  });
-
   // ── Continue where user left off ──
   const posKey = wrap._posKey;
   const startIdx = wrap._startFromIndex || 0;
   if (startIdx > 0) {
     const slides = wrap.querySelectorAll('.tt-slide');
     if (slides[startIdx]) {
-      // Show a small toast so user knows we resumed
       setTimeout(() => {
         toast(`▶️ Continuing from video ${startIdx + 1}`);
         slides[startIdx].scrollIntoView({ behavior: 'instant' });
@@ -4147,73 +4778,50 @@ function setupFeedObserver(wrap) {
       const isYT = e.target.classList.contains('yt-slide');
       const v = e.target.querySelector('video');
       const iframe = e.target.querySelector('iframe');
-      const spinner = e.target.querySelector('.vid-spinner');
 
       if (e.isIntersecting) {
-        // ── Save feed position for "continue from last watched" ──
+        // ── Save feed position ──
         if (posKey && e.target.dataset.slideIndex !== undefined) {
           try { localStorage.setItem(posKey, e.target.dataset.slideIndex); } catch(err) {}
         }
-        // ── Mark TC video as viewed (persistent, won't appear again) ──
+        // ── Mark TC video as viewed ──
         const postId = e.target.dataset.postId;
         if (postId && !isAd && !isYT && !e.target._tcViewMarked) {
           e.target._tcViewMarked = true;
-          // Mark after 3 seconds of watch time
           setTimeout(() => { if (e.target._tcViewMarked) saveViewedTCPost(postId); }, 3000);
         }
-        // ── TalentClip video ──
-        if (v) {
-          // 1. Set src from data-src FIRST (before anything else)
-          if (v.dataset.src && (!v.src || v.src === window.location.href || v.getAttribute('src') === null)) {
-            v.src = v.dataset.src;
-            v.preload = 'auto';
-            v.load();
-          }
-
-          // 2. Then attach events and mute
+        // ── TalentClip video — just play it, src is already set ──
+        if (v && !isYT) {
+          v.preload = 'auto'; // current video: download fully
           attachVideoEvents(e.target);
           applyMuteToSlide(e.target);
+          v.play().catch(() => {});
 
-          // 3. Play when ready
-          if (v.readyState >= 3) {
-            if (spinner) spinner.style.display = 'none';
-            v.play().catch(() => {});
-          } else {
-            if (spinner) spinner.style.display = 'flex';
-            v.play().catch(() => {}); // browsers will play when ready
-          }
-
-          // 4. Preload next slide
-          const next = e.target.nextElementSibling;
-          if (next) {
+          // TikTok-style: preload next 2 videos while this one plays
+          let next = e.target.nextElementSibling;
+          let preloadCount = 0;
+          while (next && preloadCount < 2) {
             const nv = next.querySelector('video');
-            if (nv && nv.dataset.src && (!nv.src || nv.src === window.location.href)) {
-              nv.src = nv.dataset.src;
-              nv.preload = 'auto';
-              nv.load();
-            }
+            if (nv) nv.preload = 'auto';
+            next = next.nextElementSibling;
+            preloadCount++;
           }
         }
 
-        // ── YouTube iframe — autoplay when in view ──
+        // ── YouTube iframe ──
         if (isYT && iframe) {
           const vid = e.target.dataset.ytVideoId;
           if (!iframe.src || iframe.src === window.location.href) {
-            // mute=1 allows autoplay without user gesture on all browsers/WebViews
-            // enablejsapi=1 lets us postMessage to unmute after load
             iframe.src = `https://www.youtube.com/embed/${vid}?autoplay=1&mute=1&playsinline=1&controls=1&rel=0&modestbranding=1&iv_load_policy=3&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`;
-            // After iframe loads, unmute it via postMessage
             iframe.addEventListener('load', () => {
               setTimeout(() => {
-                try {
-                  iframe.contentWindow.postMessage('{"event":"command","func":"unMute","args":""}', '*');
-                } catch(err) {}
+                try { iframe.contentWindow.postMessage('{"event":"command","func":"unMute","args":""}', '*'); } catch(err) {}
               }, 800);
             }, { once: true });
           }
         }
 
-        // View + monetization + ad tracking
+        // View + monetization tracking
         const authorUid = e.target.dataset.authorUid;
         const authorVerified = e.target.dataset.verified === 'true';
 
@@ -4587,7 +5195,7 @@ window.submitPhotoComment=async()=>{
   const text=_sanitize(inp.value||'');
   if(!text)return;
   inp.value='';
-  const usnap=await getDoc(doc(db,'users',currentUser.uid));
+  const usnap=await getCurrentUserProfile();
   const name=usnap.data()?.displayName||currentUser.displayName||'User';
   const photo=usnap.data()?.photoURL||currentUser.photoURL||'';
   const verified=usnap.data()?.isVerified===true;
@@ -4615,9 +5223,21 @@ let liveStatsListener = null;
 let facingMode = 'user';
 let micMuted = false;
 
+// ── Live stream effects/filters ──
+// Applies CSS filter directly to the livePreview video element —
+// same technique used in the video upload editor, but isolated to
+// the live preview so it doesn't affect anything else in the app.
+window.applyLiveFilter = (filterCSS, el) => {
+  const preview = document.getElementById('livePreview');
+  if (preview) preview.style.filter = filterCSS;
+  // Update the selected state on the effects strip
+  document.querySelectorAll('.live-fx').forEach(e => e.classList.remove('on'));
+  if (el) el.classList.add('on');
+};
+
 window.startLive = async () => {
   if (!currentUser) { openLoginGate(); return; }
-  const usnap = await getDoc(doc(db,'users',currentUser.uid));
+  const usnap = await getCurrentUserProfile();
   const d = usnap.data() || {};
   const isVerified = d.isVerified === true;
   if (!isVerified) { toast('Only verified creators can go live! 💙'); openPage('monetizePage'); return; }
@@ -4702,6 +5322,12 @@ window.endLive = async () => {
     liveDocId = null;
   }
   document.getElementById('liveComments').innerHTML = '';
+  // Reset effects strip to "None" so next live starts clean
+  const preview = document.getElementById('livePreview');
+  if (preview) preview.style.filter = '';
+  document.querySelectorAll('.live-fx').forEach(e => e.classList.remove('on'));
+  const firstFx = document.querySelector('.live-fx');
+  if (firstFx) firstFx.classList.add('on');
   openPage('profile');
   toast('Live ended 👋');
 };
@@ -4800,7 +5426,7 @@ window.processPayment = async () => {
 window.claimFreeVerifiedBadge = async () => {
   if (!currentUser) { openLoginGate(); return; }
   try {
-    const usnap = await getDoc(doc(db,'users',currentUser.uid));
+    const usnap = await getCurrentUserProfile();
     const d = usnap.data() || {};
     if (d.isVerified === true) {
       toast('💙 You already have your verified badge!');
@@ -4973,7 +5599,7 @@ window.closePayModal = () => {
 // ── Auto-boost next post if user has pendingBoost ──
 async function checkAndApplyBoost(postId) {
   if (!currentUser) return;
-  const usnap = await getDoc(doc(db,'users',currentUser.uid));
+  const usnap = await getCurrentUserProfile();
   if (usnap.data()?.pendingBoost) {
     await updateDoc(doc(db,'posts',postId), { boosted: true, boostedAt: serverTimestamp() });
     await updateDoc(doc(db,'users',currentUser.uid), { pendingBoost: false });
@@ -5058,15 +5684,14 @@ function attachVideoEvents(slide) {
   const v = slide.querySelector('video');
   if (!v || v._eventsAttached) return;
   v._eventsAttached = true;
-  const getSpinner = () => slide.querySelector('.vid-spinner');
-  v.addEventListener('waiting',  () => { const s=getSpinner(); if(s) s.style.display='flex'; });
-  v.addEventListener('stalled',  () => { const s=getSpinner(); if(s) s.style.display='flex'; });
-  v.addEventListener('canplay',  () => { const s=getSpinner(); if(s) s.style.display='none'; });
-  v.addEventListener('playing',  () => { const s=getSpinner(); if(s) s.style.display='none'; });
-  v.addEventListener('error',    () => {
-    const s=getSpinner(); if(s) s.style.display='flex';
-    setTimeout(() => { const t=v.currentTime; v.load(); v.currentTime=t; v.play().catch(()=>{}); }, 2000);
-  });
+  // NOTE: Do NOT call v.load() on stall/error — it resets the media element
+  // entirely including the audio decoder, causing the audio/video desync bug
+  // where audio continues playing after the video freezes. Just let the
+  // browser's native buffering handle recovery — it does this well on its own.
+  v.addEventListener('waiting', () => { const s=slide.querySelector('.vid-spinner'); if(s) s.style.display='flex'; });
+  v.addEventListener('canplay', () => { const s=slide.querySelector('.vid-spinner'); if(s) s.style.display='none'; });
+  v.addEventListener('playing', () => { const s=slide.querySelector('.vid-spinner'); if(s) s.style.display='none'; });
+  v.addEventListener('error',   () => { console.warn('Video load error:', v.src?.slice(0,60)); });
 }
 
 let _commentsPostId = null;
@@ -5084,6 +5709,7 @@ window.openTTComments = async (postId) => {
   overlay.style.display = 'block';
   drawer.classList.add('open');
   cancelReply();
+  setTimeout(initCmMicButton, 100);
   if (_commentsUnsub) _commentsUnsub();
   try {
     const q = query(collection(db,'posts',postId,'comments'), orderBy('createdAt','asc'), limit(100));
@@ -5125,7 +5751,14 @@ window.openTTComments = async (postId) => {
               ${commenterVerified ? `<span class="verified" style="width:13px;height:13px;display:inline-flex;">${verifiedBadgeSVG(13)}</span>` : ''}
               <span class="cm-time">${timeAgo(c.createdAt)}</span>
             </div>
-            <div class="cm-text">${c.text||''}</div>
+            ${c.voiceUrl ? `
+            <div class="cm-voice" style="display:flex;align-items:center;gap:8px;background:rgba(123,0,255,.12);border:1px solid rgba(123,0,255,.25);border-radius:14px;padding:8px 12px;margin-top:6px;min-width:180px;">
+              <div onclick="toggleCmVoice('${cmId}','${c.voiceUrl}')" id="cmv-btn-${cmId}" style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#7b00ff,#ff00c8);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;font-size:13px;">▶</div>
+              <div style="flex:1;">
+                <div style="height:3px;background:rgba(255,255,255,.15);border-radius:2px;"><div id="cmv-bar-${cmId}" style="height:100%;width:0%;background:linear-gradient(90deg,#7b00ff,#ff00c8);border-radius:2px;"></div></div>
+              </div>
+              <div id="cmv-time-${cmId}" style="font-size:10px;color:var(--muted);flex-shrink:0;">🎤 ${c.voiceDuration ? `${Math.floor(c.voiceDuration/60)}:${String(c.voiceDuration%60).padStart(2,'0')}` : '0:00'}</div>
+            </div>` : `<div class="cm-text">${c.text||''}</div>`}
             <div class="cm-actions">
               <span class="cm-action ${myLiked?'liked':''}" id="cml-${cmId}" onclick="likeComment('${cmId}','${postId}')">
                 ${myLiked?'❤️':'🤍'} <span id="cmln-${cmId}">${likeCount||''}</span>
@@ -5262,7 +5895,7 @@ window.submitComment = async () => {
     if (!text) return;
     const videoId = _commentsPostId.slice(3);
     inp.value = '';
-    const ud = (await getDoc(doc(db,'users',currentUser.uid))).data() || {};
+    const ud = await getCurrentUserProfile();
     await addDoc(collection(db,'ytComments',videoId,'comments'), {
       text,
       authorName: ud.displayName || currentUser.displayName || 'User',
@@ -5278,11 +5911,12 @@ window.submitComment = async () => {
   if (!text) return;
   if (!_commentsPostId) return;
   input.value = '';
+  toggleCmSendMic();
   try {
-    const ud = await getDoc(doc(db,'users',currentUser.uid));
-    const name = ud.data()?.displayName || currentUser.displayName || 'User';
-    const photo = ud.data()?.photoURL || currentUser.photoURL || '';
-    const verified = ud.data()?.isVerified === true;
+    const ud = await getCurrentUserProfile();
+    const name = ud.displayName || currentUser.displayName || 'User';
+    const photo = ud.photoURL || currentUser.photoURL || '';
+    const verified = ud.isVerified === true;
     if (_replyTo) {
       // Save as a reply under the parent comment
       await addDoc(collection(db,'posts',_commentsPostId,'comments',_replyTo.commentId,'replies'), {
@@ -5321,6 +5955,161 @@ window.submitComment = async () => {
       if(lbl){ const c=parseInt(lbl.textContent)||0; lbl.textContent=fmt(c+1); }
     }
   } catch(e){ console.error(e); toast('Could not post — check connection'); }
+};
+
+// ── Voice comments ──
+let _cmVoiceRecorder = null;
+let _cmVoiceStream = null;
+let _cmVoiceChunks = [];
+let _cmVoiceStartTime = 0;
+let _cmVoiceTimerInterval = null;
+let _cmVoiceCancelled = false;
+let _cmVoiceTouchStartX = 0;
+let _activeCmVoicePlayer = null;
+let _activeCmVoiceId = null;
+
+// Toggle mic/send button — mic shows when input is empty
+window.toggleCmSendMic = () => {
+  const hasText = (document.getElementById('commentInput')?.value || '').trim().length > 0;
+  const sendBtn = document.getElementById('cmSendBtn');
+  const micBtn = document.getElementById('cmMicBtn');
+  if (sendBtn) sendBtn.style.display = hasText ? 'flex' : 'none';
+  if (micBtn) micBtn.style.display = hasText ? 'none' : 'flex';
+};
+
+// Run once when drawer opens to set initial state
+function initCmMicButton() {
+  toggleCmSendMic();
+  const micBtn = document.getElementById('cmMicBtn');
+  if (!micBtn || micBtn._cmMicSetup) return;
+  micBtn._cmMicSetup = true;
+
+  const onStart = (clientX) => { _cmVoiceTouchStartX = clientX; startCmVoiceRecording(); };
+  const onMove = (clientX) => {
+    if (!_cmVoiceRecorder || _cmVoiceRecorder.state !== 'recording') return;
+    if (clientX - _cmVoiceTouchStartX < -80) {
+      document.getElementById('cmVoiceOverlay').style.borderTopColor = 'rgba(255,0,0,.5)';
+    }
+    if (clientX - _cmVoiceTouchStartX < -120) stopCmVoiceRecording(true);
+  };
+  const onEnd = () => { if (_cmVoiceRecorder?.state === 'recording') stopCmVoiceRecording(false); };
+
+  micBtn.addEventListener('touchstart', e => { e.preventDefault(); onStart(e.touches[0].clientX); }, { passive: false });
+  micBtn.addEventListener('touchmove',  e => onMove(e.touches[0].clientX));
+  micBtn.addEventListener('touchend',   onEnd);
+  micBtn.addEventListener('mousedown',  e => onStart(e.clientX));
+  document.addEventListener('mousemove', e => { if (_cmVoiceRecorder?.state === 'recording') onMove(e.clientX); });
+  document.addEventListener('mouseup',   () => { if (_cmVoiceRecorder?.state === 'recording') onEnd(); });
+}
+
+async function startCmVoiceRecording() {
+  if (!currentUser) { openLoginGate(); return; }
+  if (typeof MediaRecorder === 'undefined') { toast('❌ Voice notes not supported on this device'); return; }
+  _cmVoiceCancelled = false;
+  try {
+    _cmVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch(e) {
+    if (e.name === 'NotAllowedError') toast('📵 Microphone permission denied');
+    else toast('❌ Could not access microphone');
+    return;
+  }
+  _cmVoiceChunks = [];
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+  _cmVoiceRecorder = new MediaRecorder(_cmVoiceStream, { mimeType });
+  _cmVoiceRecorder.ondataavailable = e => { if (e.data.size > 0) _cmVoiceChunks.push(e.data); };
+  _cmVoiceRecorder.onstop = () => {
+    const durationSecs = Math.round((Date.now() - _cmVoiceStartTime) / 1000);
+    const blob = new Blob(_cmVoiceChunks, { type: mimeType });
+    _cmVoiceChunks = [];
+    sendVoiceComment(blob, durationSecs);
+  };
+  _cmVoiceRecorder.start();
+  _cmVoiceStartTime = Date.now();
+
+  const overlay = document.getElementById('cmVoiceOverlay');
+  if (overlay) overlay.style.display = 'flex';
+  const timerEl = document.getElementById('cmVoiceTimer');
+  _cmVoiceTimerInterval = setInterval(() => {
+    const secs = Math.floor((Date.now() - _cmVoiceStartTime) / 1000);
+    const m = Math.floor(secs / 60), s = secs % 60;
+    if (timerEl) timerEl.textContent = `${m}:${String(s).padStart(2,'0')}`;
+    if (secs >= 60) stopCmVoiceRecording(false); // max 60 seconds for a comment
+  }, 200);
+}
+
+function stopCmVoiceRecording(cancelled) {
+  _cmVoiceCancelled = cancelled;
+  clearInterval(_cmVoiceTimerInterval);
+  const overlay = document.getElementById('cmVoiceOverlay');
+  if (overlay) { overlay.style.display = 'none'; overlay.style.borderTopColor = 'rgba(255,77,109,.25)'; }
+  if (_cmVoiceStream) { _cmVoiceStream.getTracks().forEach(t => t.stop()); _cmVoiceStream = null; }
+  if (_cmVoiceRecorder && _cmVoiceRecorder.state !== 'inactive') _cmVoiceRecorder.stop();
+}
+
+async function sendVoiceComment(blob, durationSecs) {
+  if (_cmVoiceCancelled) { toast('🎤 Recording cancelled'); return; }
+  if (durationSecs < 1) { toast('🎤 Hold to record a voice comment'); return; }
+  if (!_commentsPostId || !currentUser) return;
+  try {
+    toast('⏳ Sending voice comment...');
+    const file = new File([blob], `vc-${Date.now()}.webm`, { type: blob.type });
+    const voiceUrl = await uploadToCloudinary(file);
+    const ud = await getCurrentUserProfile();
+    const name = ud.displayName || currentUser.displayName || 'User';
+    const photo = ud.photoURL || currentUser.photoURL || '';
+    const verified = ud.isVerified === true;
+    await addDoc(collection(db,'posts',_commentsPostId,'comments'), {
+      text: '', voiceUrl, voiceDuration: durationSecs,
+      authorName: name, authorPhoto: photo, authorVerified: verified,
+      uid: currentUser.uid, createdAt: serverTimestamp(),
+      likes: {}, likeCount: 0
+    });
+    await updateDoc(doc(db,'posts',_commentsPostId), { comments: increment(1) });
+    const lbl = document.getElementById('ttcm-'+_commentsPostId);
+    if (lbl) { const c = parseInt(lbl.textContent)||0; lbl.textContent = fmt(c+1); }
+  } catch(e) {
+    console.error('sendVoiceComment error:', e);
+    toast('❌ Could not send voice comment');
+  }
+}
+
+// Voice comment playback — same pattern as chat voice notes
+window.toggleCmVoice = (cmId, url) => {
+  const btn = document.getElementById('cmv-btn-' + cmId);
+  const bar = document.getElementById('cmv-bar-' + cmId);
+  const timeEl = document.getElementById('cmv-time-' + cmId);
+  if (!btn) return;
+
+  if (_activeCmVoiceId === cmId && _activeCmVoicePlayer && !_activeCmVoicePlayer.paused) {
+    _activeCmVoicePlayer.pause(); btn.textContent = '▶'; return;
+  }
+  if (_activeCmVoiceId === cmId && _activeCmVoicePlayer) {
+    _activeCmVoicePlayer.play().catch(()=>{}); btn.textContent = '⏸'; return;
+  }
+  if (_activeCmVoicePlayer) {
+    _activeCmVoicePlayer.pause();
+    const prevBtn = document.getElementById('cmv-btn-' + _activeCmVoiceId);
+    if (prevBtn) prevBtn.textContent = '▶';
+  }
+  const audio = new Audio(url);
+  _activeCmVoicePlayer = audio;
+  _activeCmVoiceId = cmId;
+  btn.textContent = '⏳';
+  audio.addEventListener('loadedmetadata', () => { btn.textContent = '⏸'; audio.play().catch(()=>{}); });
+  audio.addEventListener('timeupdate', () => {
+    if (!audio.duration) return;
+    if (bar) bar.style.width = (audio.currentTime / audio.duration * 100) + '%';
+    if (timeEl) {
+      const r = Math.max(0, Math.round(audio.duration - audio.currentTime));
+      timeEl.textContent = `🎤 ${Math.floor(r/60)}:${String(r%60).padStart(2,'0')}`;
+    }
+  });
+  audio.addEventListener('ended', () => {
+    btn.textContent = '▶';
+    if (bar) bar.style.width = '0%';
+    _activeCmVoicePlayer = null; _activeCmVoiceId = null;
+  });
+  audio.addEventListener('error', () => { btn.textContent = '❌'; });
 };
 
 window.animBtn = (el, cls) => {
@@ -6190,8 +6979,7 @@ window.postPhoto=async()=>{
       toast('Uploading photo...');
       mediaUrl = await uploadToCloudinary(editedFile, pct => { btn.textContent = `Uploading ${pct}%...`; });
     }
-    const usnap=await getDoc(doc(db,'users',currentUser.uid));
-    const ud=usnap.data()||{};
+    const ud=await getCurrentUserProfile();
     const isVerified = ud.isVerified === true;
     const docRef = await addDoc(collection(db,'posts'),{
       type:'photo', uid:currentUser.uid,
@@ -6359,29 +7147,117 @@ document.addEventListener('visibilitychange', () => {
 async function sendNotification(toUid, data) {
   if (!toUid || !currentUser) return;
   try {
-    // Save to Firestore so it shows in the bell
+    // ── ALWAYS fetch sender's real name + photo from Firestore ──
+    // Never trust currentUser.displayName or passed-in fromName/fromPhoto —
+    // they can be stale, an email address, or a Google avatar that looks
+    // wrong in the notification list. Firestore is the single source of truth.
+    const senderSnap = await getCurrentUserProfile();
+    const senderData = senderSnap.data() || {};
+    const senderName = senderData.displayName || senderData.name
+      || currentUser.displayName
+      || currentUser.email?.split('@')[0]
+      || 'Someone';
+    const senderPhoto = senderData.photoURL || senderData.photo || currentUser.photoURL || '';
+
+    // Override whatever was passed in with the clean Firestore values
+    data = { ...data, fromName: senderName, fromPhoto: senderPhoto, fromUid: currentUser.uid };
+
+    // ── Message grouping ──
+    // Use a deterministic document ID: "msg_{senderUid}_{recipientUid}"
+    // so there's always exactly ONE notification per sender per recipient,
+    // updated in-place instead of adding new docs every message.
+    if (data.type === 'message') {
+      const groupDocId = `msg_${currentUser.uid}_${toUid}`;
+      const groupRef = doc(db, 'users', toUid, 'notifications', groupDocId);
+      const groupSnap = await getDoc(groupRef);
+
+      if (groupSnap.exists() && groupSnap.data().read === false) {
+        // Already have an unread message notification — increment count
+        const count = (groupSnap.data().messageCount || 1) + 1;
+        const sup = count <= 20
+          ? ['','¹','²','³','⁴','⁵','⁶','⁷','⁸','⁹','¹⁰','¹¹','¹²','¹³','¹⁴','¹⁵','¹⁶','¹⁷','¹⁸','¹⁹','²⁰'][count]
+          : `(${count})`;
+        await updateDoc(groupRef, {
+          messageCount: count,
+          title: `💬 ${senderName} sent you a message${sup}`,
+          body: data.body,
+          fromPhoto: senderPhoto,
+          createdAt: serverTimestamp(),
+          read: false
+        });
+      } else {
+        // First unread message from this sender (or previous was already read)
+        await setDoc(groupRef, {
+          ...data,
+          messageCount: 1,
+          title: `💬 ${senderName} sent you a message`,
+          read: false,
+          createdAt: serverTimestamp()
+        });
+      }
+      await triggerPushNotification(toUid, { ...data, title: `💬 ${senderName}` });
+      return;
+    }
+
+    // Non-message notifications — just add a new doc
     await addDoc(collection(db,'users',toUid,'notifications'), {
       ...data, read: false, createdAt: serverTimestamp()
     });
-    // If this is OUR own notification (e.g. someone liked our post),
-    // show it via SW for reliability even when app is backgrounded
-    if (toUid === currentUser.uid && 'serviceWorker' in navigator) {
+    await triggerPushNotification(toUid, data);
+
+  } catch(e) { console.log('Notification send failed:', e); }
+}
+
+// ── Push notification delivery ──
+// Tries 3 methods in order of reliability:
+// 1. FCM via Firestore trigger (best — works when app is fully closed)
+// 2. Service Worker postMessage (works when app is backgrounded on web)
+// 3. Web Notification API (works when page is open but hidden)
+async function triggerPushNotification(toUid, data) {
+  try {
+    // Method 1: Write to a 'pushQueue' collection — a Cloud Function or
+    // FCM integration reads this and sends a real push to the device.
+    // This is the ONLY method that works when the app is fully closed.
+    // To wire this up: Firebase Console → Cloud Functions (or use
+    // Firebase Admin SDK) to watch pushQueue and call FCM send API.
+    await addDoc(collection(db,'pushQueue'), {
+      toUid,
+      title: data.title,
+      body: data.body,
+      icon: data.fromPhoto || 'icon-192.png',
+      type: data.type || 'general',
+      fromUid: data.fromUid || currentUser?.uid || '',
+      sentAt: serverTimestamp(),
+      delivered: false
+    });
+  } catch(e) {
+    // pushQueue collection may not exist yet — that's OK, fall through
+  }
+
+  // Method 2: Service Worker (backgrounded web/PWA)
+  if ('serviceWorker' in navigator) {
+    try {
       const reg = await navigator.serviceWorker.ready;
       reg.active?.postMessage({
         type: 'SEND_NOTIF',
         title: data.title,
-        body:  data.body,
-        icon:  data.fromPhoto || 'icon-192.png',
-        tag:   data.type + '-' + toUid
+        body: data.body,
+        icon: data.fromPhoto || 'icon-192.png',
+        tag: (data.type || 'notif') + '-' + toUid
       });
-    } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
+    } catch(e) {}
+  }
+
+  // Method 3: Web Notification API (page open but hidden)
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
+    try {
       new Notification(data.title, {
         body: data.body,
         icon: data.fromPhoto || 'icon-192.png',
-        tag:  data.type + '-' + toUid
+        tag: (data.type || 'notif') + '-' + toUid
       });
-    }
-  } catch(e) { console.log('Notification send failed:', e); }
+    } catch(e) {}
+  }
 }
 
 // Notify all followers when a new video is posted
@@ -6481,28 +7357,69 @@ window.openNotifications = async () => {
       return;
     }
     list.innerHTML = '';
+
+    // Pre-fetch real names+photos from Firestore for all unique senders
+    // so we never show stale Google email names or email-address display names
+    const uniqueSenderUids = [...new Set(sortedDocs.map(d => d.data().fromUid).filter(Boolean))];
+    const senderProfiles = {};
+    await Promise.all(uniqueSenderUids.map(async uid => {
+      try {
+        const usnap = await getDoc(doc(db,'users',uid));
+        if (usnap.exists()) {
+          const ud = usnap.data();
+          senderProfiles[uid] = {
+            name: ud.displayName || ud.name || 'Someone',
+            photo: ud.photoURL || ud.photo || ''
+          };
+        }
+      } catch(e) {}
+    }));
+
     sortedDocs.forEach(d => {
       const n = d.data();
+      // Use live Firestore profile if available, fall back to stored data
+      const profile = senderProfiles[n.fromUid] || {};
+      const displayName = profile.name
+        || (n.fromName && !n.fromName.includes('@') ? n.fromName : null)
+        || n.fromName?.split('@')[0]
+        || 'Someone';
+      const displayPhoto = profile.photo || '';
+      // Rebuild clean title using real display name
+      const rawTitle = n.title || 'Notification';
+      const title = rawTitle.includes('@')
+        ? rawTitle.replace(/[^\s@]+@[^\s@]+\.[^\s@]+/g, displayName) // replace email in title
+        : rawTitle.replace(n.fromName || '', displayName); // replace stored name with fresh one
+
       const el = document.createElement('div');
       el.style.cssText = `display:flex;gap:12px;align-items:flex-start;padding:14px 8px;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;background:${n.read?'transparent':'rgba(0,198,255,.05)'};border-radius:12px;margin-bottom:4px;`;
-      const ico = {like:'❤️',follow:'👤',comment:'💬',new_video:'🎬',gift:'🎁'}[n.type]||'🔔';
+      const ico = {like:'❤️',follow:'👤',comment:'💬',new_video:'🎬',gift:'🎁',message:'💬'}[n.type]||'🔔';
+      const countBadge = (n.messageCount && n.messageCount > 1)
+        ? `<div style="position:absolute;top:-4px;right:-4px;background:#ff4d6d;color:#fff;font-size:10px;font-weight:800;border-radius:10px;padding:1px 5px;min-width:16px;text-align:center;">${n.messageCount}</div>`
+        : '';
       el.innerHTML = `
-        <div style="width:46px;height:46px;border-radius:50%;background:var(--card);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;overflow:hidden;">
-          ${n.fromPhoto ? `<img src="${n.fromPhoto}" style="width:100%;height:100%;object-fit:cover;">` : ico}
+        <div style="width:46px;height:46px;border-radius:50%;background:var(--card);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;overflow:hidden;position:relative;">
+          ${displayPhoto
+            ? `<img src="${displayPhoto}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'">`
+            : `<span>${ico}</span>`}
+          ${countBadge}
         </div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:3px;cursor:pointer;" onclick="if('${n.fromUid}')viewUserProfile('${n.fromUid}')">${n.title||'Notification'}</div>
+          <div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:3px;">${title}</div>
           <div style="font-size:12px;color:var(--muted);line-height:1.5;">${n.body||''}</div>
           <div style="font-size:11px;color:var(--muted);margin-top:4px;">${timeAgo(n.createdAt)}</div>
         </div>
         ${!n.read ? '<div style="width:8px;height:8px;border-radius:50%;background:var(--primary);flex-shrink:0;margin-top:4px;"></div>' : ''}`;
-      // Mark as read on tap
       el.onclick = async () => {
         el.style.background = 'transparent';
         el.querySelector('[style*="border-radius:50%;background:var(--primary)"]')?.remove();
         await updateDoc(doc(db,'users',currentUser.uid,'notifications',d.id),{read:true}).catch(()=>{});
-        if (n.postId) {
-          // Open that post
+        if (n.type === 'message' && n.fromUid) {
+          panel.remove();
+          openChatRoom(n.fromUid, displayName, displayPhoto, null);
+        } else if (n.fromUid && n.type === 'follow') {
+          panel.remove();
+          viewUserProfile(n.fromUid);
+        } else if (n.postId) {
           panel.remove();
         }
       };
@@ -6564,8 +7481,7 @@ window.uploadVideo=async()=>{
       btn.textContent = `Uploading ${pct}%...`;
     });
     const mediaUrl = getOptimizedVideoUrl(rawUrl);
-    const usnap=await getDoc(doc(db,'users',currentUser.uid));
-    const ud=usnap.data()||{};
+    const ud=await getCurrentUserProfile();
     const isVerifiedV = ud.isVerified === true;
     const vDocRef = await addDoc(collection(db,'posts'),{
       type:'video', uid:currentUser.uid,
@@ -6996,7 +7912,7 @@ window.openSearchFeedPlayer = (items, startIndex, queryLabel) => {
           // TC video — autoplay
           const v = slide.querySelector('video');
           if (v) {
-            if (v.dataset.src && !v.src) { v.src = v.dataset.src; v.load(); }
+            if (v.dataset.src && !v.src) { v.src = v.dataset.src; }
             v.play().catch(()=>{});
           }
         }
@@ -7189,6 +8105,7 @@ window.openPage = (id) => {
   // send button and making it look broken even though it worked fine.
   const navbar = document.querySelector('.navbar');
   if (navbar) navbar.style.display = (id === 'chatRoomPage') ? 'none' : 'flex';
+  if (id !== 'chatRoomPage') document.getElementById('chatRoomBg')?.remove();
 
   if(id==='profile' && !window._viewingUser){viewingUid=currentUser?.uid||null;loadProfile(viewingUid);}
   if(id==='tiktokPage') loadExploreFeed();
@@ -7266,7 +8183,7 @@ window.addEventListener('popstate', () => {
 async function loadEarningsPage() {
   if (!currentUser) { openPage('profile'); return; }
 
-  const usnap = await getDoc(doc(db,'users',currentUser.uid));
+  const usnap = await getCurrentUserProfile();
   const d = usnap.data() || {};
 
   // Block unverified
@@ -7478,7 +8395,7 @@ window.submitWithdraw = async () => {
   if (!phone) { toast('Enter your mobile number'); return; }
   if (!amount || amount < 50) { toast('Minimum withdrawal is K50'); return; }
 
-  const usnap = await getDoc(doc(db,'users',currentUser.uid));
+  const usnap = await getCurrentUserProfile();
   const d = usnap.data() || {};
   const totalLikes = d.totalLikes || 0;
   const totalViews = d.totalViews || 0;
@@ -7655,7 +8572,7 @@ window.dismissInstall = () => {
 
 // ─── Service Worker (inline — no external sw.js needed) ───
 if ('serviceWorker' in navigator) {
-  const SW_VERSION = 'talentclip-v1';
+  const SW_VERSION = 'talentclip-v3';
 
   const swCode = `
 const CACHE = '${SW_VERSION}';
@@ -7874,80 +8791,76 @@ self.addEventListener('fetch', e => {
     <div class="hdr-title">📋 Terms & Conditions</div>
     <div style="width:30px;"></div>
   </div>
-  <div style="padding:20px 16px 100px;overflow-y:auto;max-height:calc(100vh - 60px);">
-    <div style="font-size:12px;color:var(--muted);margin-bottom:20px;">Last updated: April 2026</div>
+  <div style="padding:20px 16px 100px;">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">Last updated: June 2026</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:20px;">🇿🇲 KJ DevWorks Studios, Zambia</div>
 
-    <div style="display:flex;flex-direction:column;gap:20px;">
+    <div style="background:rgba(0,198,255,.06);border:1px solid rgba(0,198,255,.15);border-radius:16px;padding:14px 16px;margin-bottom:20px;font-size:13px;color:var(--muted);line-height:1.7;"><b style="color:#00c6ff;">Plain English:</b> Free short-video platform. You own your content. Verified badge is free now. Paid features coming soon. Must be 13+. Don't post harmful content. We never sell your data.</div>
+
+    <div style="display:flex;flex-direction:column;gap:14px;">
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
-        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">1. Acceptance of Terms</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">By accessing or using TalentClip, you agree to be bound by these Terms and Conditions. If you do not agree with any part of these terms, you may not use our platform. TalentClip is operated by <b style="color:var(--text);">KJ DevWorks Studios</b>, under the direction of CEO <b style="color:var(--text);">KAS JEY</b>, Zambia 🇿🇲.</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">1. Acceptance</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">By using TalentClip you agree to these Terms. Operated by <b style="color:var(--text);">KJ DevWorks Studios</b>, CEO <b style="color:var(--text);">KAS JEY</b>, Zambia 🇿🇲.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
-        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">2. User Accounts</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">You must be at least <b style="color:var(--text);">13 years old</b> to use TalentClip. You are responsible for maintaining the security of your account and all activities under it. You must provide accurate information when creating your account.</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">2. Eligibility</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">Must be <b style="color:var(--text);">13+</b>. Provide accurate info. Keep your password secure. You are responsible for all activity on your account.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
         <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">3. Content Policy</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">You are solely responsible for content you post. You must NOT post:
-          <br><br>❌ Nudity or sexually explicit content
-          <br>❌ Hate speech or discrimination
-          <br>❌ Violence or graphic content
-          <br>❌ Spam or misleading content
-          <br>❌ Content that violates copyright
-          <br>❌ Content involving minors inappropriately
-          <br><br>TalentClip reserves the right to remove any content and suspend accounts that violate these rules without notice.</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">You own and are responsible for your content. Prohibited:<br><br>❌ Nudity / sexual content<br>❌ Hate speech / discrimination<br>❌ Violence, harassment, threats<br>❌ Content exploiting minors<br>❌ Spam / misinformation / impersonation<br>❌ Copyright infringement<br>❌ Promotion of illegal activities<br><br>We may remove content and suspend accounts without notice.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
-        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">4. Verified Creator Program</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">The Verified Creator subscription costs <b style="color:var(--text);">K160/month or K250/year</b>. Payments are processed via MoneyUnify (Zambia). Subscriptions auto-renew unless cancelled. Refunds are not provided for partial months. TalentClip reserves the right to revoke verification for policy violations.</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">4. Verified Badge</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">Currently <b style="color:#00c853;">FREE</b> as a promotional offer. A paid tier may be introduced in future — you will be notified before any charge. Badge may be revoked for policy violations.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
-        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">5. Creator Earnings</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">Verified creators receive <b style="color:var(--text);">30% of monthly ad revenue</b> split proportionally by monetized views. A monetized view is counted when a viewer watches your content after viewing an advertisement. Minimum withdrawal is <b style="color:var(--text);">K50</b>. TalentClip processes withdrawals within 1–3 business days. Earnings may vary monthly based on total platform revenue and your share of views.</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">5. Premium & Paid Features</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">Premium (ad-free), Talent Boost and creator earnings are <b style="color:#ffaa00;">coming soon</b>. No payments are currently processed. Full pricing and refund policies will be published before launch.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
-        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">6. Talent Boost</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">Talent Boost costs <b style="color:var(--text);">K120 per boost</b> and promotes your post to the top of the feed for 7 days. Boosts are non-refundable once activated. TalentClip does not guarantee a specific number of views from boosted posts.</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">6. Advertising</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">Ads may appear in the feed for non-premium users. All ads will be clearly labelled. No third-party ads are active yet. Premium users will never see ads.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
-        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">7. Premium Subscription</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">TalentClip Premium costs <b style="color:var(--text);">K160/month or K250/year</b> and removes advertisements from your experience. Premium does not include creator monetization — that requires the Verified Creator plan.</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">7. Intellectual Property</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">You retain ownership of your content. By posting you grant TalentClip a non-exclusive licence to display it on the platform. YouTube content remains property of its creators and is subject to YouTube's Terms of Service.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
-        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">8. Intellectual Property</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">You retain ownership of content you post. By posting on TalentClip, you grant us a non-exclusive, royalty-free license to display, distribute and promote your content within the platform. TalentClip's logo, name and design are owned by TalentClip Media and may not be used without permission.</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">8. Privacy & Data</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">We collect name, email, profile photo and posted content. Stored securely on Google Firebase and Cloudinary. <b style="color:var(--text);">We never sell your data.</b> Private messages are never shared except as required by law. Request account deletion by emailing us.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
-        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">9. Privacy & Data</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">TalentClip collects your name, email, profile photo and content you upload. This data is stored securely on Google Firebase. We do not sell your personal data to third parties. Ads shown on the platform may be personalized based on your activity.</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">9. Device Permissions</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">Camera, microphone, media storage and notification permissions may be requested. All can be revoked in device settings. Revoking camera/mic disables live streaming and video recording.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
         <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">10. Limitation of Liability</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">TalentClip is provided "as is." We are not liable for any loss of data, earnings, or damages arising from use of the platform. We do not guarantee uninterrupted service availability.</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">TalentClip is provided "as is." We are not liable for loss of data, earnings or damages, to the maximum extent permitted by Zambian law. We do not guarantee uninterrupted service.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
-        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">11. Changes to Terms</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">TalentClip may update these terms at any time. Continued use of the app after changes means you accept the new terms. We will notify users of major changes via the app.</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">11. Governing Law</div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">These terms are governed by the laws of the <b style="color:var(--text);">Republic of Zambia</b>.</div>
       </div>
 
       <div style="background:var(--card);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.06);">
         <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:var(--primary);">12. Contact</div>
-        <div style="font-size:13px;color:var(--muted);line-height:1.7;">For any questions about these terms, contact us at:<br><br>
-          👤 <b style="color:var(--text);">CEO: KAS JEY</b><br>
+        <div style="font-size:13px;color:var(--muted);line-height:1.7;">
+          👤 CEO: <b style="color:var(--text);">KAS JEY</b><br>
           🏢 <b style="color:var(--text);">KJ DevWorks Studios</b><br>
           📧 <b style="color:var(--text);">kjdevworksstudios@gmail.com</b><br>
-          🌍 <b style="color:var(--text);">talentclip-cassata.netlify.app</b><br>
+          🌍 <b style="color:var(--text);">kasondejeremiah2-code.github.io/Talent-Clip/</b><br>
           🇿🇲 <b style="color:var(--text);">Zambia</b>
         </div>
       </div>
@@ -8016,10 +8929,22 @@ self.addEventListener('fetch', e => {
     <span id="cdReplyLabel">Replying to @someone</span>
     <span onclick="cancelReply()" style="cursor:pointer;color:#ff4d6d;">✕ Cancel</span>
   </div>
+
+  <!-- Voice recording overlay inside drawer -->
+  <div id="cmVoiceOverlay" style="display:none;padding:12px 16px;background:linear-gradient(135deg,rgba(26,0,48,.95),rgba(14,14,31,.95));border-top:1px solid rgba(255,77,109,.25);align-items:center;gap:12px;">
+    <div style="width:12px;height:12px;border-radius:50%;background:#ff4d6d;animation:livePulse 1.2s infinite;flex-shrink:0;"></div>
+    <div style="flex:1;">
+      <div style="font-size:12px;font-weight:700;color:#fff;">Recording voice comment...</div>
+      <div id="cmVoiceTimer" style="font-size:20px;font-weight:800;color:#ff4d6d;font-variant-numeric:tabular-nums;">0:00</div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);text-align:right;line-height:1.6;">◀ Slide to cancel<br>Release to send</div>
+  </div>
+
   <div class="cd-inp-row">
     <input id="commentInput" placeholder="Add a comment..." maxlength="300"
-      onkeydown="if(event.key==='Enter')submitComment()">
-    <button class="cd-send" onclick="submitComment()">➤</button>
+      oninput="toggleCmSendMic()" onkeydown="if(event.key==='Enter')submitComment()">
+    <button id="cmSendBtn" onclick="submitComment()" class="cd-send">➤</button>
+    <button id="cmMicBtn" class="cd-send" style="display:none;background:linear-gradient(135deg,#7b00ff,#ff00c8);touch-action:none;">🎤</button>
   </div>
 </div>
 <div id="commentsOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:7999;" onclick="closeComments()"></div>
