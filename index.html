@@ -1018,6 +1018,16 @@ body{
     <div class="hdr-menu" onclick="openMenu()">☰</div>
   </div>
   <div class="search-wrap"><input class="search-inp" type="text" placeholder="🔍 Search creators or posts..." onkeydown="if(event.key==='Enter')runSearch(this.value)" oninput="onSearchType(this.value)" readonly onclick="openSearchPage()"></div>
+
+  <!-- 🔴 Live Now row — loads active live streams from Firestore -->
+  <div id="liveNowRow" style="display:none;padding:4px 16px 8px;">
+    <div style="font-size:12px;font-weight:800;letter-spacing:1.5px;color:#ff4d6d;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+      <div style="width:8px;height:8px;border-radius:50%;background:#ff4d6d;animation:livePulse 1.2s infinite;"></div>
+      LIVE NOW
+    </div>
+    <div id="liveNowList" style="display:flex;gap:12px;overflow-x:auto;scrollbar-width:none;padding-bottom:4px;"></div>
+  </div>
+
   <div class="cats">
     <div class="cat-card c-anim" onclick="openCategory('Animation','🎬')"><div class="icon">🎬</div><div class="name">Animation</div><div class="sub">Creative clips</div></div>
     <div class="cat-card c-com" onclick="openCategory('Comedy','😂')"><div class="icon">😂</div><div class="name">Comedy</div><div class="sub">Make em laugh</div></div>
@@ -1959,7 +1969,12 @@ function getVideoThumb(videoUrl) {
 async function uploadToCloudinary(file, onProgress) {
   if (!file) throw new Error('No file selected');
   const isVideo = file.type.startsWith('video/');
-  const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/${isVideo?'video':'image'}/upload`;
+  const isAudio = file.type.startsWith('audio/');
+  // Cloudinary handles audio files through the VIDEO endpoint, not image.
+  // Sending audio to /image/upload causes a silent rejection — that's why
+  // voice notes were failing with "couldn't send".
+  const resourceType = (isVideo || isAudio) ? 'video' : 'image';
+  const url = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/${resourceType}/upload`;
   const fd = new FormData();
   fd.append('file', file);
   fd.append('upload_preset', CLOUDINARY_PRESET);
@@ -2552,6 +2567,156 @@ let _chatUnsub      = null;
 let _chatsUnsub     = null;
 
 function getChatId(uid1, uid2) { return [uid1, uid2].sort().join('_'); }
+
+// ── Live Now discovery ──
+// Shows active live streams from followed creators + anyone live on home page
+async function loadLiveNow() {
+  const row = document.getElementById('liveNowRow');
+  const list = document.getElementById('liveNowList');
+  if (!row || !list) return;
+  try {
+    const snap = await getDocs(
+      query(collection(db,'lives'), where('active','==',true), limit(20))
+    );
+    if (snap.empty) { row.style.display = 'none'; return; }
+    row.style.display = 'block';
+    list.innerHTML = snap.docs.map(d => {
+      const l = d.data();
+      const av = l.hostPhoto
+        ? `<img src="${l.hostPhoto}" style="width:100%;height:100%;object-fit:cover;">`
+        : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff;">${(l.hostName||'?').charAt(0)}</div>`;
+      return `
+        <div onclick="watchLiveStream('${d.id}','${(l.hostName||'').replace(/'/g,'')}')"
+          style="flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;">
+          <div style="position:relative;width:60px;height:60px;border-radius:50%;overflow:hidden;border:3px solid #ff4d6d;box-shadow:0 0 12px rgba(255,77,109,.5);">
+            ${av}
+            <div style="position:absolute;bottom:0;left:0;right:0;background:#ff4d6d;text-align:center;font-size:9px;font-weight:800;color:#fff;padding:1px 0;">LIVE</div>
+          </div>
+          <div style="font-size:10px;font-weight:700;color:#fff;max-width:64px;text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${l.hostName||'Creator'}</div>
+          <div style="font-size:10px;color:#ff4d6d;">👁 ${l.viewers||0}</div>
+        </div>`;
+    }).join('');
+  } catch(e) { console.warn('loadLiveNow error:', e.code); }
+}
+
+// ── Watch a live stream as a viewer ──
+// Since we don't have a real video relay server (WebRTC SFU), viewers see
+// the host's profile + live chat. Real video relay needs a media server
+// like Agora, Livekit or 100ms — can be added as a Capacitor plugin later.
+window.watchLiveStream = async (liveId, hostName) => {
+  try {
+    const snap = await getDoc(doc(db,'lives',liveId));
+    if (!snap.exists() || !snap.data().active) {
+      toast('This live stream has ended 👋'); loadLiveNow(); return;
+    }
+    const l = snap.data();
+    // Show a viewer panel — chat + info, video relay coming in future update
+    const panel = document.createElement('div');
+    panel.id = 'liveViewerPanel';
+    panel.style.cssText = 'position:fixed;inset:0;z-index:9200;background:#000;display:flex;flex-direction:column;';
+    panel.innerHTML = `
+      <div style="padding:14px 16px;display:flex;align-items:center;gap:12px;background:rgba(0,0,0,.8);position:relative;z-index:2;flex-shrink:0;">
+        <span onclick="closeLiveViewerPanel()" style="font-size:24px;cursor:pointer;color:#fff;">←</span>
+        <div style="width:36px;height:36px;border-radius:50%;overflow:hidden;border:2px solid #ff4d6d;flex-shrink:0;">
+          ${l.hostPhoto ? `<img src="${l.hostPhoto}" style="width:100%;height:100%;object-fit:cover;">` : `<div style="width:100%;height:100%;background:#1a0030;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;">${(l.hostName||'?').charAt(0)}</div>`}
+        </div>
+        <div style="flex:1;">
+          <div style="font-weight:800;font-size:14px;color:#fff;">${l.hostName||'Creator'}</div>
+          <div style="font-size:11px;color:#ff4d6d;display:flex;align-items:center;gap:4px;">
+            <div style="width:6px;height:6px;border-radius:50%;background:#ff4d6d;animation:livePulse 1.2s infinite;"></div>
+            LIVE · 👁 ${l.viewers||0} watching
+          </div>
+        </div>
+        <div onclick="viewUserProfile('${l.uid||''}')" style="font-size:12px;background:linear-gradient(135deg,#ff4d6d,#ff00c8);border:none;border-radius:20px;padding:6px 14px;color:#fff;font-weight:700;cursor:pointer;">Follow</div>
+      </div>
+
+      <!-- Video placeholder — real relay needs media server -->
+      <div style="flex:1;background:linear-gradient(135deg,#0a0018,#1a0030);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;position:relative;">
+        <div style="width:80px;height:80px;border-radius:50%;overflow:hidden;border:4px solid #ff4d6d;box-shadow:0 0 30px rgba(255,77,109,.5);">
+          ${l.hostPhoto ? `<img src="${l.hostPhoto}" style="width:100%;height:100%;object-fit:cover;">` : `<div style="width:100%;height:100%;background:#1a0030;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:800;color:#fff;">${(l.hostName||'?').charAt(0)}</div>`}
+        </div>
+        <div style="font-size:15px;font-weight:700;color:#fff;">${l.hostName||'Creator'} is LIVE</div>
+        <div style="font-size:12px;color:rgba(255,255,255,.5);text-align:center;padding:0 40px;">Video streaming coming soon 🚀<br>Chat with the host below!</div>
+        <!-- Floating hearts -->
+        <div id="liveViewerHearts" style="position:absolute;bottom:20px;right:20px;display:flex;flex-direction:column;align-items:flex-end;gap:4px;pointer-events:none;"></div>
+      </div>
+
+      <!-- Comments list -->
+      <div id="liveViewerComments" style="height:140px;overflow-y:auto;padding:8px 14px;display:flex;flex-direction:column;gap:6px;background:rgba(0,0,0,.5);">
+        <div style="font-size:12px;color:rgba(255,255,255,.4);text-align:center;">Say something to ${l.hostName||'the host'} 👋</div>
+      </div>
+
+      <!-- Actions + input -->
+      <div style="padding:10px 14px;background:rgba(0,0,0,.8);display:flex;gap:10px;align-items:center;flex-shrink:0;">
+        <input id="liveViewerInput" placeholder="Comment..." maxlength="200"
+          style="flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:9px 14px;color:#fff;font-family:'Outfit',sans-serif;font-size:13px;outline:none;">
+        <button onclick="sendLiveViewerComment('${liveId}')" style="background:linear-gradient(135deg,#ff4d6d,#ff00c8);border:none;border-radius:50%;width:38px;height:38px;color:#fff;font-size:16px;cursor:pointer;">➤</button>
+        <button onclick="sendLiveViewerHeart('${liveId}')" style="background:rgba(255,77,109,.15);border:1px solid rgba(255,77,109,.3);border-radius:50%;width:38px;height:38px;font-size:18px;cursor:pointer;">❤️</button>
+      </div>`;
+    document.body.appendChild(panel);
+
+    // Increment viewer count
+    try { await updateDoc(doc(db,'lives',liveId), { viewers: increment(1) }); } catch(e) {}
+
+    // Real-time comment listener for viewer
+    const commQ = query(collection(db,'lives',liveId,'comments'), orderBy('at','asc'), limit(100));
+    const unsub = onSnapshot(commQ, snap => {
+      const box = document.getElementById('liveViewerComments');
+      if (!box) { unsub(); return; }
+      snap.docChanges().forEach(change => {
+        if (change.type === 'added') {
+          const c = change.doc.data();
+          const msg = document.createElement('div');
+          msg.style.cssText = 'font-size:12px;color:#fff;background:rgba(0,0,0,.4);padding:5px 10px;border-radius:10px;';
+          msg.innerHTML = `<b style="color:#00c6ff;">${c.name||'Viewer'}:</b> ${c.text||''}`;
+          box.appendChild(msg);
+          box.scrollTop = box.scrollHeight;
+        }
+      });
+    }, () => {});
+    panel._unsub = unsub;
+  } catch(e) {
+    console.error('watchLiveStream error:', e);
+    toast('❌ Could not load live stream');
+  }
+};
+
+window.closeLiveViewerPanel = async () => {
+  const panel = document.getElementById('liveViewerPanel');
+  if (panel) {
+    if (panel._unsub) panel._unsub();
+    panel.remove();
+  }
+};
+
+window.sendLiveViewerComment = async (liveId) => {
+  if (!currentUser) { openLoginGate(); return; }
+  const inp = document.getElementById('liveViewerInput');
+  const text = inp.value.trim();
+  if (!text || !liveId) return;
+  inp.value = '';
+  try {
+    const ud = await getCurrentUserProfile();
+    await addDoc(collection(db,'lives',liveId,'comments'), {
+      text, uid: currentUser.uid,
+      name: ud.displayName || currentUser.displayName || 'Viewer',
+      at: serverTimestamp()
+    });
+  } catch(e) { toast('❌ Could not send comment'); }
+};
+
+window.sendLiveViewerHeart = async (liveId) => {
+  // Float a heart animation
+  const heartsBox = document.getElementById('liveViewerHearts');
+  if (heartsBox) {
+    const h = document.createElement('div');
+    h.textContent = '❤️';
+    h.style.cssText = 'font-size:22px;animation:floatUp 1.5s ease-out forwards;';
+    heartsBox.appendChild(h);
+    setTimeout(() => h.remove(), 1500);
+  }
+  try { await updateDoc(doc(db,'lives',liveId), { likes: increment(1) }); } catch(e) {}
+};
 
 async function loadChatList() {
   if (!currentUser) return;
@@ -5296,6 +5461,30 @@ window.startLive = async () => {
     openPage('livePage');
     toast('🔴 You are LIVE!');
 
+    // ── Notify all followers that you're live ──
+    // This is how TikTok does it — followers get a push notification.
+    // We batch-notify up to 50 followers without reading each doc individually.
+    try {
+      const followersSnap = await getDocs(
+        query(collection(db,'users',currentUser.uid,'followers'), limit(50))
+      );
+      const senderProfile = await getCurrentUserProfile();
+      const senderName = senderProfile.displayName || currentUser.displayName || 'Creator';
+      const senderPhoto = senderProfile.photoURL || currentUser.photoURL || '';
+      followersSnap.docs.forEach(f => {
+        // Fire-and-forget — don't await so it doesn't block the live page
+        sendNotification(f.id, {
+          type: 'live',
+          fromUid: currentUser.uid,
+          fromName: senderName,
+          fromPhoto: senderPhoto,
+          liveId: liveDocId,
+          title: `🔴 ${senderName} is LIVE now!`,
+          body: 'Tap to watch the live stream',
+        }).catch(() => {});
+      });
+    } catch(e) { console.warn('Live notifications failed:', e); }
+
   } catch(e) {
     console.error('startLive error:', e);
     if (e.name === 'NotAllowedError') {
@@ -6885,15 +7074,37 @@ window.ttGift = (postId, authorName) => {
 };
 
 window.sendGift = async (postId, authorName, giftName, pts) => {
-  if (!currentUser) return;
+  if (!currentUser) { openLoginGate(); return; }
   document.getElementById('giftSheet')?.remove();
-  toast(`🎁 Sent a ${giftName} to ${authorName}! (+${pts} pts)`);
+  toast(`🎁 Sent a ${giftName} to ${authorName}!`);
   try {
+    // Look up the post to get the author's uid so we can notify them
+    const postSnap = await getDoc(doc(db,'posts',postId));
+    const authorUid = postSnap.exists() ? (postSnap.data().uid || postSnap.data().authorId) : null;
+    const senderProfile = await getCurrentUserProfile();
+    const senderName = senderProfile.displayName || currentUser.displayName || 'Someone';
+    const senderPhoto = senderProfile.photoURL || currentUser.photoURL || '';
+
+    // Save the gift record
     await addDoc(collection(db,'gifts'), {
-      fromUid: currentUser.uid, postId, authorName, giftName, pts,
+      fromUid: currentUser.uid, fromName: senderName,
+      toUid: authorUid, postId, authorName, giftName, pts,
       sentAt: serverTimestamp()
     });
-  } catch(e) { console.log('Gift record failed (offline)'); }
+
+    // Notify the author so they actually know they received a gift
+    if (authorUid && authorUid !== currentUser.uid) {
+      await sendNotification(authorUid, {
+        type: 'gift',
+        fromUid: currentUser.uid,
+        fromName: senderName,
+        fromPhoto: senderPhoto,
+        postId,
+        title: `🎁 ${senderName} sent you a ${giftName}!`,
+        body: `You received a gift on your video`,
+      });
+    }
+  } catch(e) { console.warn('Gift failed:', e.message); }
 };
 
 window.ttFollowFromFeed = async (uid, btn) => {
@@ -8112,6 +8323,7 @@ window.openPage = (id) => {
   if(id==='earningsPage') loadEarningsPage();
   if(id==='settingsPage') loadSettings();
   if(id==='chatsPage') loadChatList();
+  if(id==='home') loadLiveNow();
 };
 
 // ── Android back button via popstate ──
